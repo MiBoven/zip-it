@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#131313">
+<meta name="description" content="Zip-It — pack and unpack ZIP, TAR and GZ archives with password protection, entirely in your browser. Nothing is uploaded.">
+<meta property="og:title" content="Zip-It — The Zipper for your Files">
+<meta property="og:description" content="Pack and unpack ZIP, TAR and GZ archives with password protection, entirely in your browser.">
+<meta property="og:image" content="https://zipit.michels.world/icons/android-chrome-512x512.png">
+<meta property="og:url" content="https://zipit.michels.world">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Zip-It">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
+<link rel="icon" href="/favicon.ico">
+<script>
+  // Apply the saved theme before first paint to avoid a flash.
+  try { var t = localStorage.getItem('zipit-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+</script>
+<link rel="stylesheet" href="style.css">
+<title>Zip-It — The Zipper for your Files</title>
+</head>
+<body>
+
+<header>
+  <div class="brand" id="brand" role="button" tabindex="0" title="Zip-It — Home">
+    <img class="brand-logo" src="/icons/android-chrome-192x192.png" alt="" width="40" height="40">
+    <div class="brand-text">
+      <h1>Zip-It</h1>
+      <p class="brand-sub">The Zipper for your Files</p>
+    </div>
+  </div>
+  <div class="header-actions">
+    <button class="icon" id="fullscreenBtn" title="Fullscreen" aria-label="Toggle fullscreen">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+    </button>
+    <div class="menu-wrap">
+      <button class="icon" id="menuBtn" title="Menu" aria-label="Menu" aria-haspopup="true" aria-expanded="false">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+      </button>
+      <div class="dropdown" id="menu" role="menu" style="display:none">
+        <button class="menu-item" id="themeItem" role="menuitemcheckbox" aria-checked="true">
+          <span>Dark mode</span><span class="switch" aria-hidden="true"></span>
+        </button>
+        <button class="menu-item" id="installItem" role="menuitem"><span>Install app</span></button>
+        <button class="menu-item" id="settingsItem" role="menuitem"><span>Settings</span></button>
+        <button class="menu-item" id="aboutItem" role="menuitem"><span>About</span></button>
+      </div>
+    </div>
+  </div>
+</header>
+<p class="sub">Pack and unpack ZIP, TAR and GZ archives — with password protection — entirely in your browser. Nothing is uploaded.</p>
+
+<div class="segment mode-toggle" id="modeToggle">
+  <button type="button" class="seg-btn active" data-mode="pack">Pack</button>
+  <button type="button" class="seg-btn" data-mode="unpack">Unpack</button>
+</div>
+
+<!-- ===================== PACK ===================== -->
+<section id="packView">
+  <div class="segment" id="sourceToggle">
+    <button type="button" class="seg-btn active" data-source="files">Files</button>
+    <button type="button" class="seg-btn" data-source="folder">Folder</button>
+  </div>
+  <p class="segment-hint" id="sourceHint">Pick one or more files. Folders can also be dragged and dropped.</p>
+
+  <div class="drop" id="packDrop" tabindex="0" role="button">
+    <svg class="drop-icon" viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+    <p><strong id="packDropTitle">Tap to choose files</strong><br>or drag and drop files and folders here</p>
+    <input type="file" id="packInput" multiple>
+  </div>
+
+  <div id="packListWrap" hidden>
+    <div class="list-head">
+      <span id="packSummary"></span>
+      <button type="button" class="link-btn danger" id="clearPackBtn">Clear all</button>
+    </div>
+    <div class="list" id="packList"></div>
+  </div>
+
+  <div class="card">
+    <label class="label-main" for="archiveName">Archive name</label>
+    <div class="row name-row">
+      <input type="text" id="archiveName" spellcheck="false" autocomplete="off" autocapitalize="off">
+      <span class="ext" id="archiveExt">.zip</span>
+      <button type="button" class="icon small" id="resetNameBtn" title="Use default name" aria-label="Use default name">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+      </button>
+    </div>
+
+    <div class="row field">
+      <label class="label-main" for="formatSelect">Format</label>
+      <select id="formatSelect">
+        <option value="zip">ZIP (.zip)</option>
+        <option value="tar.gz">TAR.GZ (.tar.gz)</option>
+        <option value="tar">TAR (.tar, uncompressed)</option>
+        <option value="gz">GZ (.gz, single file)</option>
+      </select>
+    </div>
+    <p class="hint warn" id="formatHint" hidden></p>
+
+    <div class="field" id="levelField">
+      <div class="row">
+        <label class="label-main" for="levelRange">Compression</label>
+        <span class="spacer"></span>
+        <span class="qty-val" id="levelLabel">6 · Normal</span>
+      </div>
+      <input type="range" id="levelRange" min="0" max="9" value="6">
+      <div class="range-legend"><span>Store</span><span>Fast</span><span>Normal</span><span>Maximum</span></div>
+    </div>
+  </div>
+
+  <div class="card" id="passwordCard">
+    <div class="toggle-row">
+      <label class="label-main" for="pwEnabled">Password protection</label>
+      <input type="checkbox" class="toggle" id="pwEnabled">
+    </div>
+    <p class="hint" id="pwUnavailable" hidden>Password protection is only available for ZIP archives.</p>
+    <div id="pwFields" hidden>
+      <div class="row pw-row">
+        <input type="password" id="pwInput" placeholder="Password" autocomplete="new-password" spellcheck="false" autocapitalize="off">
+        <button type="button" class="icon" id="pwShowBtn" title="Show password" aria-label="Show password">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+        <button type="button" class="icon" id="pwGenBtn" title="Generate a strong password" aria-label="Generate a strong password">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1" fill="currentColor"/><circle cx="15.5" cy="8.5" r="1" fill="currentColor"/><circle cx="8.5" cy="15.5" r="1" fill="currentColor"/></svg>
+        </button>
+        <button type="button" class="icon" id="pwCopyBtn" title="Copy password" aria-label="Copy password">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </button>
+      </div>
+      <div class="strength" id="strength" data-level="-1">
+        <div class="strength-bar"><span></span><span></span><span></span><span></span><span></span></div>
+        <div class="strength-text"><strong id="strengthLabel">Enter a password</strong><span id="strengthDetail"></span></div>
+        <p class="hint" id="strengthTips"></p>
+      </div>
+      <div class="row field">
+        <label class="label-main" for="encSelect">Encryption</label>
+        <select id="encSelect">
+          <option value="aes">AES-256 (recommended)</option>
+          <option value="zipcrypto">ZipCrypto (legacy)</option>
+        </select>
+      </div>
+      <p class="hint" id="encHint"></p>
+    </div>
+  </div>
+
+  <button type="button" class="primary" id="packBtn" disabled>Zip it!</button>
+
+  <div class="card progress-card" id="packProgress" hidden>
+    <div class="progress-bar"><span id="packProgressBar"></span></div>
+    <div class="row">
+      <p class="progress-text" id="packProgressText">Preparing…</p>
+      <button type="button" class="link-btn danger" id="cancelPackBtn">Cancel</button>
+    </div>
+  </div>
+
+  <div class="card result-card" id="packResult" hidden>
+    <div class="result-head">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <div class="result-info">
+        <div class="name" id="resultName"></div>
+        <div class="meta" id="resultMeta"></div>
+      </div>
+    </div>
+    <div class="btn-row">
+      <a class="btn primary-btn" id="resultDownload" href="#" download>Download</a>
+      <button type="button" class="btn" id="resultShare" hidden>Share</button>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== UNPACK ===================== -->
+<section id="unpackView" hidden>
+  <div class="drop" id="unpackDrop" tabindex="0" role="button">
+    <svg class="drop-icon" viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+    <p><strong>Tap to choose an archive</strong><br>or drag and drop it here</p>
+    <p class="drop-formats">ZIP · TAR · TAR.GZ / TGZ · GZ</p>
+    <input type="file" id="unpackInput" accept=".zip,.tar,.gz,.tgz,.tar.gz,application/zip,application/x-zip-compressed,application/gzip,application/x-gzip,application/x-tar">
+  </div>
+
+  <div class="card" id="archiveCard" hidden>
+    <div class="archive-head">
+      <svg class="file-ico" viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M10 9h1M10 12h1M10 15h1"/></svg>
+      <div class="result-info">
+        <div class="name" id="arcName"></div>
+        <div class="meta" id="arcMeta"></div>
+      </div>
+      <button type="button" class="remove" id="closeArchiveBtn" title="Close archive" aria-label="Close archive">&times;</button>
+    </div>
+    <div id="unpackPwWrap" hidden>
+      <p class="hint lock-hint">🔒 This archive is password-protected.</p>
+      <div class="row pw-row">
+        <input type="password" id="unpackPw" placeholder="Password" autocomplete="current-password" spellcheck="false" autocapitalize="off">
+        <button type="button" class="icon" id="unpackPwShowBtn" title="Show password" aria-label="Show password">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button type="button" class="btn primary-btn" id="extractFolderBtn" hidden>Extract to folder…</button>
+      <button type="button" class="btn" id="downloadAllBtn">Download all</button>
+    </div>
+  </div>
+
+  <p class="status" id="unpackStatus" hidden></p>
+  <div class="list" id="unpackList"></div>
+</section>
+
+<footer>Zip-It · v0.1.0</footer>
+
+<!-- ===================== MODALS ===================== -->
+<div class="modal-bg" id="settingsModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <h2 id="settingsTitle">Settings</h2>
+    <div class="row field">
+      <label class="label-main" for="setFormat">Default format</label>
+      <select id="setFormat">
+        <option value="zip">ZIP</option>
+        <option value="tar.gz">TAR.GZ</option>
+        <option value="tar">TAR</option>
+        <option value="gz">GZ</option>
+      </select>
+    </div>
+    <div class="field">
+      <div class="row">
+        <label class="label-main" for="setLevel">Default compression</label>
+        <span class="spacer"></span>
+        <span class="qty-val" id="setLevelLabel">6 · Normal</span>
+      </div>
+      <input type="range" id="setLevel" min="0" max="9" value="6">
+    </div>
+    <div class="row field">
+      <label class="label-main" for="setEnc">Default encryption</label>
+      <select id="setEnc">
+        <option value="aes">AES-256</option>
+        <option value="zipcrypto">ZipCrypto</option>
+      </select>
+    </div>
+    <p class="hint">Settings are stored only in this browser.</p>
+    <button type="button" class="close" data-close>Close</button>
+  </div>
+</div>
+
+<div class="modal-bg" id="aboutModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
+    <div class="about-head">
+      <img src="/icons/android-chrome-192x192.png" alt="" width="56" height="56">
+      <div>
+        <h2 id="aboutTitle">Zip-It</h2>
+        <p class="brand-sub">The Zipper for your Files</p>
+        <p class="version">Version 0.1.0</p>
+      </div>
+    </div>
+    <p>Packs files and folders into ZIP, TAR, TAR.GZ and GZ archives — and unpacks them again. Everything happens on your device: no file ever leaves your browser, and the app works offline once loaded.</p>
+    <table>
+      <tr><td>Pack</td><td>ZIP, TAR, TAR.GZ, GZ</td></tr>
+      <tr><td>Unpack</td><td>ZIP (incl. AES &amp; ZipCrypto), TAR, TAR.GZ / TGZ, GZ</td></tr>
+      <tr><td>Encryption</td><td>AES-256 (WinZip AE-2) or ZipCrypto</td></tr>
+      <tr><td>Compression</td><td>Deflate, levels 0 (store) – 9 (maximum)</td></tr>
+    </table>
+    <p class="hint">Privacy: no tracking, no cookies, no uploads. Only your theme and default settings are stored locally in this browser.</p>
+    <button type="button" class="close" data-close>Close</button>
+  </div>
+</div>
+
+<div class="modal-bg" id="installModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="installTitle">
+    <h2 id="installTitle">Install Zip-It</h2>
+    <p>Install Zip-It like a regular app — it then starts from your home screen and works offline.</p>
+    <table>
+      <tr><td>Android</td><td>Chrome menu <strong>⋮</strong> → <strong>Install app</strong> / <strong>Add to Home screen</strong></td></tr>
+      <tr><td>iPhone / iPad</td><td>Safari <strong>Share</strong> button → <strong>Add to Home Screen</strong></td></tr>
+      <tr><td>Desktop</td><td>Chrome / Edge: install icon in the address bar, or menu → <strong>Install Zip-It</strong></td></tr>
+    </table>
+    <button type="button" class="close" data-close>Close</button>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
