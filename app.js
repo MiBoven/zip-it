@@ -5,7 +5,7 @@ const APP_VERSION = '0.2.0';
 const $ = (id) => document.getElementById(id);
 
 // ---------- Settings ----------
-const DEFAULTS = { format: 'zip', level: 6, encryption: 'aes', junkSkip: true, subfolder: true };
+const DEFAULTS = { format: 'zip', level: 6, encryption: 'aes', junkSkip: true, subfolder: true, verifyAfter: false };
 function loadSettings() {
   try { return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem('zipit-settings') || '{}')); }
   catch (e) { return Object.assign({}, DEFAULTS); }
@@ -119,6 +119,7 @@ $('settingsItem').addEventListener('click', () => {
   $('setEnc').value = settings.encryption;
   $('setJunk').checked = settings.junkSkip;
   $('setSubfolder').checked = settings.subfolder;
+  $('setVerify').checked = settings.verifyAfter;
   openModal('settingsModal');
 });
 
@@ -415,7 +416,8 @@ const COMMON = ['password', 'passwort', 'qwerty', 'qwertz', 'azerty', 'letmein',
 const SEQUENCES = ['abcdefghijklmnopqrstuvwxyz', '01234567890', 'qwertyuiop', 'asdfghjkl', 'yxcvbnm', 'zxcvbnm', 'qwertzuiop'];
 
 // Lazy-loaded set of the most common passwords (membership check for the strength meter).
-let commonSet = null;         // Set of lowercased passwords, or null until loaded
+let commonSet = null;         // Set of lowercased passwords (for the strength lookup)
+let commonWords = null;        // same list, original case + order kept (for recovery)
 let commonListMeta = '';      // version/date string from the file header
 let commonListPromise = null;
 function loadCommonList() {
@@ -424,13 +426,16 @@ function loadCommonList() {
     .then((r) => (r.ok ? r.text() : Promise.reject()))
     .then((txt) => {
       const set = new Set();
+      const words = [];
       for (const raw of txt.split('\n')) {
         const line = raw.trim();
         if (!line) continue;
         if (line[0] === '#') { const m = line.match(/version:\s*(.+)/i); if (m) commonListMeta = m[1].trim(); continue; }
         set.add(line.toLowerCase());
+        words.push(line); // keep original case so recovery can try e.g. "LuckyLuke" verbatim
       }
       commonSet = set;
+      commonWords = words;
       updateAboutPwList();
       if (pwInput.value) updateStrength();
       return set;
@@ -563,7 +568,7 @@ pwEnabled.addEventListener('change', () => {
   updatePackUI();
 });
 
-function pwHidden() { return pwInput.type === 'password'; }
+function pwHidden() { return pwInput.classList.contains('masked'); }
 function confirmNeeded() { return pwEnabled.checked && pwHidden(); }
 // A re-typed password (while hidden) guards against a typo locking you out of your own files.
 function updateConfirmVisibility() {
@@ -594,9 +599,9 @@ function setEyeButton(btn, showing) {
   btn.classList.toggle('active', showing);             // highlight while revealing
 }
 function togglePwVisibility(input, btn) {
-  const show = input.type === 'password';
-  input.type = show ? 'text' : 'password';
-  setEyeButton(btn, show);
+  const wasMasked = input.classList.contains('masked');
+  input.classList.toggle('masked', !wasMasked);
+  setEyeButton(btn, wasMasked); // was masked → now showing
 }
 setEyeButton($('pwShowBtn'), false);
 setEyeButton($('unpackPwShowBtn'), false);
@@ -656,7 +661,7 @@ function generatePassword(len = 20) {
 $('pwGenBtn').addEventListener('click', () => {
   pwInput.value = generatePassword();
   pwConfirm.value = pwInput.value;
-  if (pwInput.type === 'password') togglePwVisibility(pwInput, $('pwShowBtn'));
+  if (pwInput.classList.contains('masked')) togglePwVisibility(pwInput, $('pwShowBtn'));
   updateConfirmVisibility();
   resetHibp();
   updateStrength();
@@ -752,16 +757,37 @@ async function doPack() {
       $('packProgressText').textContent = `${Math.floor(pct)}% · ${p.label || ''}`;
     });
     showResult(res.blob, fileName, inputSize, fileCount, fmt, usePw, performance.now() - started, skipped);
+    if ($('verifyAfter').checked) runVerify(res.blob, usePw ? pwInput.value : '');
   } catch (err) {
     if (err.code !== 'CANCELLED') alert('Packing failed: ' + err.message);
   } finally {
     setPacking(false);
   }
 }
+
+// Optional post-pack verification: re-open the new archive and read every entry back.
+async function runVerify(blob, password) {
+  const note = $('verifyNote');
+  note.hidden = false;
+  note.className = 'verify-note';
+  note.textContent = 'Verifying…';
+  try {
+    const r = await callWorker({ cmd: 'verify', file: blob, password }, (p) => {
+      const pct = p.total ? Math.floor((p.done / p.total) * 100) : 0;
+      note.textContent = `Verifying… ${pct}%`;
+    });
+    note.className = 'verify-note ok';
+    note.textContent = `✓ Verified — ${r.verified} file${r.verified === 1 ? '' : 's'} read back correctly.`;
+  } catch (e) {
+    note.className = 'verify-note bad';
+    note.textContent = `⚠ Verification failed: ${e.message}`;
+  }
+}
 $('cancelPackBtn').addEventListener('click', () => { if (packing) { resetWorker(); toast('Cancelled'); } });
 
 function showResult(blob, fileName, inputSize, fileCount, fmt, encrypted, ms, skipped) {
   hideResult();
+  $('verifyNote').hidden = true;
   resultUrl = URL.createObjectURL(blob);
   const dl = $('resultDownload');
   dl.href = resultUrl;
@@ -1092,7 +1118,7 @@ $('recoverStartBtn').addEventListener('click', async () => {
     spec = { mode: 'mask', mask, cap: recoverCap() };
   } else {
     await loadCommonList();
-    const words = commonSet ? Array.from(commonSet) : COMMON.slice();
+    const words = commonWords || (commonSet ? Array.from(commonSet) : COMMON.slice());
     spec = { mode: 'dict', words, variations: $('recVariations').checked };
   }
   startRecover(spec);
@@ -1385,6 +1411,7 @@ function applyDefaults() {
   $('encHint').textContent = ENC_HINTS[encSelect.value];
   $('junkSkip').checked = settings.junkSkip;
   subfolderToggle.checked = settings.subfolder;
+  $('verifyAfter').checked = settings.verifyAfter;
   updatePackUI();
   updateStrength();
 }
@@ -1399,9 +1426,117 @@ $('setEnc').addEventListener('change', (e) => { settings.encryption = e.target.v
 $('setJunk').addEventListener('change', (e) => { settings.junkSkip = e.target.checked; saveSettings(); applyDefaults(); });
 $('setSubfolder').addEventListener('change', (e) => { settings.subfolder = e.target.checked; saveSettings(); updateSubfolderName(); });
 // Remember the pack-side toggles when the user flips them directly.
+$('setVerify').addEventListener('change', (e) => { settings.verifyAfter = e.target.checked; saveSettings(); applyDefaults(); });
 $('junkSkip').addEventListener('change', (e) => { settings.junkSkip = e.target.checked; saveSettings(); });
 subfolderToggle.addEventListener('change', () => { settings.subfolder = subfolderToggle.checked; saveSettings(); });
+$('verifyAfter').addEventListener('change', (e) => { settings.verifyAfter = e.target.checked; saveSettings(); });
 encSelect.addEventListener('change', () => { settings.encryption = encSelect.value; saveSettings(); });
+
+// ---------- Convert / re-save ----------
+setEyeButton($('convPwShowBtn'), false);
+const convFormat = $('convFormat'), convLevel = $('convLevel'), convPw = $('convPw'), convEnc = $('convEnc'), convPwEnabled = $('convPwEnabled');
+let convertingBusy = false, convResultUrl = null;
+const SRC_FMT = { ZIP: 'zip', TAR: 'tar', 'TAR.GZ': 'tar.gz', GZ: 'gz' };
+
+convLevel.addEventListener('input', () => { $('convLevelLabel').textContent = levelText(convLevel.value); });
+$('convPwShowBtn').addEventListener('click', () => togglePwVisibility(convPw, $('convPwShowBtn')));
+convPw.addEventListener('input', updateConvStrength);
+convEnc.addEventListener('change', updateConvStrength);
+
+function updateConvStrength() {
+  const box = $('convStrength'), pw = convPw.value;
+  if (!pw) { box.dataset.level = '-1'; $('convStrengthLabel').textContent = 'Enter a password'; $('convStrengthDetail').textContent = ''; return; }
+  const r = ratePassword(pw);
+  box.dataset.level = String(r.level);
+  $('convStrengthLabel').textContent = STRENGTH_LABELS[r.level];
+  const rate = convEnc.value === 'zipcrypto' ? 2e10 : 2e6;
+  $('convStrengthDetail').textContent = `≈ ${Math.round(r.bits)} bits · ${formatDuration(Math.pow(2, r.bits) / 2 / rate)} to crack`;
+}
+function updateConvUI() {
+  const fmt = convFormat.value, zip = fmt === 'zip';
+  convLevel.disabled = fmt === 'tar';
+  $('convLevelField').style.opacity = fmt === 'tar' ? '.5' : '';
+  convPwEnabled.disabled = !zip;
+  $('convPwUnavailable').hidden = zip;
+  $('convPwFields').hidden = !(zip && convPwEnabled.checked);
+  const files = archiveFiles().length;
+  const warn = (fmt === 'gz' && files !== 1) ? `GZ needs exactly one file, but this archive has ${files}. Choose TAR.GZ or ZIP.` : '';
+  $('convFormatHint').textContent = warn;
+  $('convFormatHint').hidden = !warn;
+  $('convStartBtn').disabled = !!warn || convertingBusy;
+}
+convFormat.addEventListener('change', updateConvUI);
+convPwEnabled.addEventListener('change', () => { updateConvUI(); if (convPwEnabled.checked) { loadCommonList(); convPw.focus(); } });
+
+$('convertBtn').addEventListener('click', () => {
+  if (!arc) return;
+  convFormat.value = SRC_FMT[arc.info.format] || 'zip';
+  convLevel.value = settings.level;
+  $('convLevelLabel').textContent = levelText(settings.level);
+  convEnc.value = settings.encryption;
+  convPwEnabled.checked = false;
+  convPw.value = '';
+  if (!convPw.classList.contains('masked')) togglePwVisibility(convPw, $('convPwShowBtn'));
+  updateConvStrength();
+  $('convProgress').hidden = true;
+  $('convResult').hidden = true;
+  $('convDownload').hidden = true;
+  $('convStartBtn').hidden = false;
+  if (convResultUrl) { URL.revokeObjectURL(convResultUrl); convResultUrl = null; }
+  updateConvUI();
+  openModal('convertModal');
+});
+
+$('convStartBtn').addEventListener('click', doConvert);
+async function doConvert() {
+  if (!arc || convertingBusy) return;
+  const fmt = convFormat.value;
+  if (fmt === 'gz' && archiveFiles().length !== 1) { updateConvUI(); return; }
+  const usePw = fmt === 'zip' && convPwEnabled.checked;
+  if (usePw && !convPw.value) { convPw.focus(); return; }
+  convertingBusy = true;
+  $('convStartBtn').disabled = true;
+  $('convDownload').hidden = true;
+  $('convResult').hidden = true;
+  $('convProgress').hidden = false;
+  $('convBar').style.width = '0%';
+  $('convStatus').textContent = 'Starting…';
+  if (convResultUrl) { URL.revokeObjectURL(convResultUrl); convResultUrl = null; }
+  const outName = (stripArchiveExt(arc.file.name) || 'archive') + EXT[fmt];
+  try {
+    const res = await callWorker({
+      cmd: 'convert', file: arc.file,
+      opts: { format: fmt, level: Number(convLevel.value), password: usePw ? convPw.value : '', encryption: convEnc.value },
+      password: unpackPw.value
+    }, (p) => {
+      const pct = p.total ? Math.min(100, (p.done / p.total) * 100) : 0;
+      $('convBar').style.width = pct.toFixed(1) + '%';
+      $('convStatus').textContent = p.label || 'Working…';
+    });
+    convResultUrl = URL.createObjectURL(res.blob);
+    const dl = $('convDownload');
+    dl.href = convResultUrl; dl.download = outName; dl.hidden = false;
+    $('convProgress').hidden = true;
+    const r = $('convResult');
+    r.hidden = false; r.className = 'verdict good';
+    r.innerHTML = `<strong>Done.</strong> <code>${outName}</code> · ${formatSize(res.blob.size)}` + (usePw ? (convEnc.value === 'aes' ? ' · AES-256 🔒' : ' · ZipCrypto 🔒') : '');
+  } catch (err) {
+    $('convProgress').hidden = true;
+    const r = $('convResult');
+    r.hidden = false; r.className = 'verdict warn';
+    r.innerHTML = (err.code === 'NEED_PASSWORD' || err.code === 'WRONG_PASSWORD')
+      ? '<strong>Password needed.</strong> Enter the archive’s current password in the unpack screen first, then convert.'
+      : `<strong>Couldn’t convert.</strong> ${err.message}`;
+  } finally {
+    convertingBusy = false;
+    $('convStartBtn').disabled = false;
+  }
+}
+$('convertModal').addEventListener('click', (e) => {
+  if (e.target === $('convertModal') || e.target.hasAttribute('data-close')) {
+    if (convResultUrl) { URL.revokeObjectURL(convResultUrl); convResultUrl = null; }
+  }
+});
 
 // ---------- Init ----------
 applyDefaults();

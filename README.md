@@ -28,6 +28,7 @@
   - Optional **Have I Been Pwned** check: a button looks the password up in public breach data using k-anonymity — only the first 5 characters of the password's SHA-1 hash are sent, never the password itself. It's the one and only network request the app ever makes, and only on an explicit tap after a confirmation
   - Show / hide, **generate a strong 20-character password**, and copy to clipboard
   - A warning before zipping with a "Very weak" password
+- **Verify after packing** (optional, off by default): re-opens the finished archive and reads every entry back to catch a bad write before you delete the originals
 - Progress bar with the current file, and a **Cancel** button
 - Result card with the final size, compression ratio, time and number of skipped system files — **Download**, plus **Share** on devices that support sharing files (e.g. Android)
 
@@ -40,7 +41,9 @@
   - **Common passwords** — runs through the common-password list, optionally with variations (capitalisation, appended digits/years, simple leet)
   - **I remember part of it** — a pattern where you type the parts you remember and mark the unknown ones: `#` a digit, `?` a lowercase letter, `^` uppercase, `@` any letter, `*` letter or digit, `!` a symbol (`\\#` for a literal `#`). Example: `Sommer####` tries Sommer0000 … Sommer9999. The number of combinations and a rough time estimate are shown before you start; overly large patterns are refused
   - Runs in its own worker with a progress bar and a working **Cancel**. On success it shows the password and can fill it into the extract field. This only helps for weak or partly-remembered passwords — a strong unknown AES password is not realistically recoverable (roughly 1,000–2,000 guesses/second for AES on a typical device)
+  - The dictionary keeps each list entry's original casing, so an unusual-case common password (e.g. `LuckyLuke`) is tried verbatim, on top of the lower/Capitalised/UPPER variants the recovery generates itself
 - **Checkbox per file** with a select-all control — **Extract selected** pulls out only the ticked files (all selected by default)
+- **Convert / re-save**: re-pack an opened archive into another format (ZIP, TAR.GZ, TAR, GZ) and/or with a different password — add one, change it, or remove it. The original file is untouched; an encrypted source needs its password entered first
 - **Save** single files, **Download all** (separate downloads), or **Extract to folder…** (keeps the folder structure; Chrome / Edge on desktop)
 - **Into a subfolder** (default on, folder extraction only): the files land in a subfolder named after the archive — `MeineBilder.zip` → a `MeineBilder/` folder. If the archive already contains a single top-level folder, that one is used instead of nesting it again
 - On desktop Chrome / Edge, the installed app can be set as handler for `.zip`, `.tar`, `.gz` and `.tgz` files
@@ -50,6 +53,7 @@
 - **Android share sheet**: once installed, Zip-It appears in the system "Share" menu. Share files to it to pack them (it opens in Pack with the files loaded); share a single archive to open it straight in Unpack
 - On desktop Chrome / Edge, the installed app can also be opened by double-clicking `.zip`, `.tar`, `.gz` or `.tgz` files
 - Password-visibility buttons stay highlighted while the password is shown and use a struck-through eye while it's hidden
+- Password fields are masked plain-text inputs (via `-webkit-text-security`), not real `password` inputs — so the browser never offers to save them and never autofills them
 - Dark mode by default, light mode via the menu
 - Fullscreen toggle (where supported)
 - Settings for the default format, compression level and encryption method (stored only in this browser)
@@ -91,15 +95,11 @@ Works in current versions of Chrome, Edge, Firefox and Safari (16.4+ — `Decomp
 
 ## Password list
 
-The strength meter checks whether a password is a known common one. The file `data/common-passwords.txt` holds that list — one password per line, `#` lines are comments, and a `# version:` line is shown in the About dialog. It's loaded lazily (only once you start entering a password), so it never slows the initial load.
+The strength meter checks whether a password is a known common one, and password recovery uses the same list as its dictionary. The file `data/common-passwords.txt` holds it.
 
-Shipped is a **starter list of ~550 entries** (the most common passwords plus frequent German ones and keyboard patterns). For much better coverage, replace it with a full top-10000 list:
+**Format** — plain text, one password per line. Lines starting with `#` are comments; a `# version:` line is shown in the About dialog. The order is kept as-is, so if the list is sorted by frequency (most common first), recovery tries the likeliest passwords first. The file is loaded **lazily** (only once you start entering a password), so it never slows the initial load.
 
-1. Download `10-million-password-list-top-10000.txt` from SecLists:
-   `https://github.com/danielmiessler/SecLists/blob/master/Passwords/Common-Credentials/10-million-password-list-top-10000.txt`
-   (raw: `https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10-million-password-list-top-10000.txt`)
-2. Save it as `data/common-passwords.txt` (overwrite the starter file). Optionally keep the first two comment lines so the About dialog shows a version/date.
-3. Commit. No code change needed — the app reads whatever is in that file.
+Shipped is a **German top-100000 list (~89,900 entries after de-duplication)**, frequency-ordered. To replace or extend it, just overwrite `data/common-passwords.txt` with another list in the same one-per-line format and commit — no code change needed. (A JSON array like `["pw1","pw2",…]` first has to be converted to one-per-line.)
 
 The list stays in the repo and is served locally; nothing about it is ever sent anywhere.
 

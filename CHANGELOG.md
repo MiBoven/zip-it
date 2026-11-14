@@ -1,5 +1,12 @@
 # Changelog
 
+### 0.5.0 — 2026-11-14 — Convert, verify & masked password fields
+- **Convert / re-save** an opened archive: change the format (ZIP, TAR.GZ, TAR, GZ) and/or the password — add, change or remove it. The original is left untouched; an encrypted source needs its current password entered first
+- **Verify after packing** (optional, off by default): re-reads the finished archive to confirm every entry is intact before you delete the originals
+- **Password fields no longer trigger the browser's save-password / autofill prompts**: they're masked plain-text inputs (`-webkit-text-security`) instead of real `password` inputs, so the browser doesn't treat them as login credentials. Masking and the show/hide toggle work exactly as before
+- **Recovery dictionary keeps original casing**, so unusual-case common passwords (e.g. `LuckyLuke`) are tried verbatim in addition to the generated capitalisation variants
+- ZIP entry timestamps are now read and preserved when converting
+
 ### 0.4.0 — 2026-11-14 — Android share sheet & toggle polish
 - **Web Share Target**: once installed, Zip-It shows up in Android's "Share" menu. Shared files open in Pack ready to zip; a single shared archive opens straight in Unpack. The service worker receives the files and hands them to the app
 - **Password-visibility buttons now show their state**: highlighted (accent colour) while the password is revealed, and a struck-through "eye-off" icon while it's hidden — on both the pack and unpack password fields

@@ -152,6 +152,9 @@ input.toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2
 
 .pw-row { margin-top: 12px; }
 .pw-row input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* Masking via text-security on a plain text input, so browsers don't treat these
+   as login fields and never offer to save or autofill them. */
+input.masked { -webkit-text-security: disc; text-security: disc; }
 .pw-row input.error { outline: 2px solid var(--danger); outline-offset: -1px; }
 
 /* ---------- Password strength ---------- */
@@ -221,6 +224,10 @@ button.primary:not(:disabled):active { opacity: .85; }
   padding: 11px 12px; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer;
 }
 .btn.primary-btn { background: var(--accent); color: var(--accent-text); border-color: transparent; }
+.btn.full { flex: none; width: 100%; margin-top: 8px; }
+.verify-note { margin: 10px 0 0; font-size: 12.5px; color: var(--text-secondary); }
+.verify-note.ok { color: var(--ok); font-weight: 600; }
+.verify-note.bad { color: var(--danger); font-weight: 600; }
 .btn:active { opacity: .85; }
 .btn:disabled { opacity: .45; cursor: default; }
 .link-btn {

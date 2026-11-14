@@ -824,6 +824,13 @@ function memReader(u8) {
   return async (o, l) => u8.subarray(o, o + l);
 }
 
+function dosToMs(date, time) {
+  if (!date) return Date.now();
+  const y = ((date >> 9) & 0x7f) + 1980, mo = ((date >> 5) & 0x0f) || 1, d = (date & 0x1f) || 1;
+  const h = (time >> 11) & 0x1f, mi = (time >> 5) & 0x3f, s = (time & 0x1f) * 2;
+  return new Date(y, mo - 1, d, h, mi, s).getTime();
+}
+
 async function openZip(read, total) {
   const tailLen = Math.min(total, 65557);
   const tailStart = total - tailLen;
@@ -851,7 +858,7 @@ async function openZip(read, total) {
   let q = 0;
   for (let n = 0; n < count && q + 46 <= cd.length; n++) {
     if (r32(cd, q) !== 0x02014b50) break;
-    const flags = r16(cd, q + 8), method = r16(cd, q + 10), time = r16(cd, q + 12);
+    const flags = r16(cd, q + 8), method = r16(cd, q + 10), time = r16(cd, q + 12), date = r16(cd, q + 14);
     let crc = r32(cd, q + 16), csize = r32(cd, q + 20), usize = r32(cd, q + 24);
     const nameLen = r16(cd, q + 28), extraLen = r16(cd, q + 30), commentLen = r16(cd, q + 32);
     const extAttr = r32(cd, q + 38);
@@ -876,7 +883,7 @@ async function openZip(read, total) {
     }
     const dir = path.endsWith('/') || ((extAttr & 0x10) !== 0 && usize === 0);
     entries.push({
-      path, dir, size: usize, csize, crc, method, flags, time,
+      path, dir, size: usize, csize, crc, method, flags, time, mtime: dosToMs(date, time),
       encrypted: (flags & 1) !== 0, aes, localOff: localOff + shift
     });
     q += 46 + nameLen + extraLen + commentLen;
@@ -1163,6 +1170,48 @@ async function recover(file, spec, post) {
 }
 
 // =====================================================================
+// Convert / re-save: unpack everything in memory, then re-pack with new options
+// =====================================================================
+async function convert(file, opts, srcPassword, post) {
+  const arc = await openArchive(file);
+  const all = arc.entries.filter((e) => !e.path.startsWith('__MACOSX/'));
+  const files = all.filter((e) => !e.dir);
+  if (opts.format === 'gz' && files.length !== 1) {
+    throw fail(`GZ holds exactly one file, but this archive has ${files.length}. Choose TAR.GZ or ZIP.`);
+  }
+  const total = files.reduce((s, e) => s + (e.size || 0), 0) || 1;
+  let readDone = 0;
+  const entries = [];
+  for (let i = 0; i < arc.entries.length; i++) {
+    const e = arc.entries[i];
+    if (e.path.startsWith('__MACOSX/')) continue;
+    if (e.dir) { entries.push({ path: e.path, file: null, mtime: e.mtime || Date.now() }); continue; }
+    post({ type: 'progress', done: readDone, total, label: 'Reading ' + e.path });
+    const data = await extractEntry(arc, i, srcPassword);
+    entries.push({ path: e.path, file: new Blob([data]), mtime: e.mtime || Date.now() });
+    readDone += e.size || data.length;
+  }
+  const blob = await pack(entries, opts, post);
+  post({ type: 'done', blob });
+}
+
+// Verify a freshly made archive by extracting every entry (CRC/HMAC are checked inside).
+async function verifyArchive(file, password, post) {
+  const arc = await openArchive(file);
+  const files = arc.entries.filter((e) => !e.dir && !e.path.startsWith('__MACOSX/'));
+  const total = files.reduce((s, e) => s + (e.size || 0), 0) || 1;
+  let done = 0, n = 0;
+  for (let i = 0; i < arc.entries.length; i++) {
+    const e = arc.entries[i];
+    if (e.dir || e.path.startsWith('__MACOSX/')) continue;
+    post({ type: 'progress', done, total, label: 'Verifying ' + e.path });
+    await extractEntry(arc, i, password);
+    done += e.size || 0; n++;
+  }
+  post({ type: 'done', verified: n });
+}
+
+// =====================================================================
 // Message handling
 // =====================================================================
 let current = null;
@@ -1192,6 +1241,10 @@ if (typeof self !== 'undefined' && typeof importScripts === 'function') {
       } else if (m.cmd === 'close') {
         current = null;
         post({ type: 'done' });
+      } else if (m.cmd === 'convert') {
+        await convert(m.file, m.opts, m.password, post);
+      } else if (m.cmd === 'verify') {
+        await verifyArchive(m.file, m.password, post);
       } else if (m.cmd === 'recover') {
         await recover(m.file, m.spec, post);
       } else if (m.cmd === 'cancelRecover') {
