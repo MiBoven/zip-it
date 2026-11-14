@@ -1,11 +1,11 @@
 /* Zip-It — UI logic. All archive work happens in worker.js. */
 'use strict';
 
-const APP_VERSION = '0.1.0';
+const APP_VERSION = '0.2.0';
 const $ = (id) => document.getElementById(id);
 
 // ---------- Settings ----------
-const DEFAULTS = { format: 'zip', level: 6, encryption: 'aes' };
+const DEFAULTS = { format: 'zip', level: 6, encryption: 'aes', junkSkip: true, subfolder: true };
 function loadSettings() {
   try { return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem('zipit-settings') || '{}')); }
   catch (e) { return Object.assign({}, DEFAULTS); }
@@ -53,6 +53,11 @@ function normalizePath(p, isDir) {
   if (!parts.length) return '';
   return parts.join('/') + (isDir ? '/' : '');
 }
+
+// Files operating systems scatter into folders and that rarely belong in an archive.
+const JUNK_RE = /(^|\/)(\.DS_Store|Thumbs\.db|ehthumbs\.db|desktop\.ini|\.Spotlight-V100|\.Trashes|\._[^/]*)$/i;
+const JUNK_DIR_RE = /(^|\/)(__MACOSX|\.Trash(es)?)\//i;
+const isJunk = (p) => JUNK_RE.test(p) || JUNK_DIR_RE.test(p + '/');
 
 const ICON_FILE = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>';
 const ICON_DIR = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
@@ -112,6 +117,8 @@ $('settingsItem').addEventListener('click', () => {
   $('setLevel').value = settings.level;
   $('setLevelLabel').textContent = levelText(settings.level);
   $('setEnc').value = settings.encryption;
+  $('setJunk').checked = settings.junkSkip;
+  $('setSubfolder').checked = settings.subfolder;
   openModal('settingsModal');
 });
 
@@ -400,11 +407,50 @@ function levelText(l) {
 levelRange.addEventListener('input', () => { $('levelLabel').textContent = levelText(levelRange.value); });
 
 // ----- Password strength -----
+// A short built-in fallback list; the full list is lazy-loaded from /data/common-passwords.txt.
 const COMMON = ['password', 'passwort', 'qwerty', 'qwertz', 'azerty', 'letmein', 'welcome', 'willkommen', 'admin', 'iloveyou',
   'monkey', 'dragon', 'football', 'fussball', 'baseball', 'hallo', 'hello', 'schatz', 'sunshine', 'princess', 'master',
   'login', 'secret', 'geheim', 'test', 'zipit', 'abc123', 'starwars', 'shadow', 'superman', 'batman', 'trustno1', 'michael',
   'summer', 'sommer', 'winter', 'freedom', 'whatever', 'computer', 'internet', 'service', 'default', 'changeme'];
 const SEQUENCES = ['abcdefghijklmnopqrstuvwxyz', '01234567890', 'qwertyuiop', 'asdfghjkl', 'yxcvbnm', 'zxcvbnm', 'qwertzuiop'];
+
+// Lazy-loaded set of the most common passwords (membership check for the strength meter).
+let commonSet = null;         // Set of lowercased passwords, or null until loaded
+let commonListMeta = '';      // version/date string from the file header
+let commonListPromise = null;
+function loadCommonList() {
+  if (commonListPromise) return commonListPromise;
+  commonListPromise = fetch('data/common-passwords.txt')
+    .then((r) => (r.ok ? r.text() : Promise.reject()))
+    .then((txt) => {
+      const set = new Set();
+      for (const raw of txt.split('\n')) {
+        const line = raw.trim();
+        if (!line) continue;
+        if (line[0] === '#') { const m = line.match(/version:\s*(.+)/i); if (m) commonListMeta = m[1].trim(); continue; }
+        set.add(line.toLowerCase());
+      }
+      commonSet = set;
+      updateAboutPwList();
+      if (pwInput.value) updateStrength();
+      return set;
+    })
+    .catch(() => { commonListPromise = null; }); // allow a later retry
+  return commonListPromise;
+}
+// Strip trailing digits/symbols so "password123!" still matches "password".
+function commonHit(lower) {
+  if (!commonSet) return false;
+  if (commonSet.has(lower)) return true;
+  const core = lower.replace(/[^a-z]+$/i, '').replace(/^[^a-z]+/i, '');
+  return core.length >= 3 && commonSet.has(core);
+}
+function updateAboutPwList() {
+  const el = $('aboutPwList');
+  if (!el) return;
+  const n = commonSet ? commonSet.size.toLocaleString() : '—';
+  el.textContent = `Password-strength list: ${n} entries${commonListMeta ? ' (' + commonListMeta + ')' : ''}.`;
+}
 
 function rateCharClassPool(pw) {
   let pool = 0;
@@ -431,6 +477,8 @@ function ratePassword(pw) {
   let bits = effective * perChar;
   const lower = pw.toLowerCase();
   let hitWord = false;
+  // Exact (or near-exact) match against the common-password list: treat as trivially guessable.
+  let listed = commonHit(lower);
   for (const w of COMMON) {
     if (lower.includes(w)) { bits -= Math.max(0, w.length * perChar - 12); hitWord = true; }
   }
@@ -447,13 +495,15 @@ function ratePassword(pw) {
   }
   if (/(19|20)\d\d/.test(pw)) bits -= 5;
   if (/^[0-9]+$/.test(pw)) bits = Math.min(bits, chars.length * 3.3);
+  if (listed) bits = Math.min(bits, 10); // it's on a public list — effectively instant
   bits = Math.max(0, bits);
-  if (hitWord) tips.push('Avoid common words like "password".');
+  if (listed) tips.push('This password is on public lists of common passwords — attackers try these first.');
+  else if (hitWord) tips.push('Avoid common words like "password".');
   if (hitSeq) tips.push('Avoid keyboard rows and sequences like "1234" or "qwer".');
   if (chars.length < 12) tips.push('Use at least 12 characters.');
   if (pool < 62 && chars.length < 20) tips.push('Mix upper and lower case, digits and symbols.');
-  const level = bits < 28 ? 0 : bits < 40 ? 1 : bits < 60 ? 2 : bits < 80 ? 3 : 4;
-  return { bits, level, tips };
+  const level = listed ? 0 : bits < 28 ? 0 : bits < 40 ? 1 : bits < 60 ? 2 : bits < 80 ? 3 : 4;
+  return { bits, level, tips, listed };
 }
 
 function formatDuration(sec) {
@@ -481,13 +531,21 @@ function updateStrength() {
   const r = ratePassword(pw);
   box.dataset.level = String(r.level);
   $('strengthLabel').textContent = STRENGTH_LABELS[r.level];
-  // Guesses per second for a high-end GPU attacking the archive offline.
-  const rate = encSelect.value === 'zipcrypto' ? 2e10 : 1e7;
+  // Guesses per second a single high-end GPU (e.g. an RTX 4090) manages offline against
+  // the archive. AES here means PBKDF2-HMAC-SHA1 (1000 iterations); ZipCrypto is far weaker.
+  const zc = encSelect.value === 'zipcrypto';
+  const rate = zc ? 2e10 : 2e6;
   const seconds = Math.pow(2, r.bits) / 2 / rate;
-  $('strengthDetail').textContent = `≈ ${Math.round(r.bits)} bits · crack time ${formatDuration(seconds)}`;
+  $('strengthDetail').textContent = `≈ ${Math.round(r.bits)} bits · ${formatDuration(seconds)} to crack`;
+  const note = $('crackNote');
+  note.hidden = false;
+  note.textContent = zc
+    ? 'Estimate for one high-end graphics card. ZipCrypto is weak by design — a serious attacker is far faster, whatever the password.'
+    : 'Estimate for one high-end graphics card (AES-256). A large operation with many cards would be proportionally faster.';
   $('strengthTips').textContent = r.level < 3 ? r.tips.join(' ') : '';
 }
-pwInput.addEventListener('input', () => { updateStrength(); updatePackUI(); });
+pwInput.addEventListener('input', () => { resetHibp(); updateStrength(); updatePackUI(); });
+pwInput.addEventListener('focus', loadCommonList, { once: true });
 
 const ENC_HINTS = {
   aes: 'Strong encryption. Opens with 7-Zip, WinRAR, WinZip, Keka, PeaZip, most Android file managers and Zip-It — but not with the built-in Windows Explorer or macOS Archive Utility.',
@@ -495,11 +553,37 @@ const ENC_HINTS = {
 };
 encSelect.addEventListener('change', () => { $('encHint').textContent = ENC_HINTS[encSelect.value]; updateStrength(); });
 
+const pwConfirm = $('pwConfirm');
+const pwConfirmRow = $('pwConfirmRow');
+
 pwEnabled.addEventListener('change', () => {
   $('pwFields').hidden = !pwEnabled.checked;
-  if (pwEnabled.checked) pwInput.focus();
+  if (pwEnabled.checked) { loadCommonList(); pwInput.focus(); }
+  updateConfirmVisibility();
   updatePackUI();
 });
+
+function pwHidden() { return pwInput.type === 'password'; }
+function confirmNeeded() { return pwEnabled.checked && pwHidden(); }
+// A re-typed password (while hidden) guards against a typo locking you out of your own files.
+function updateConfirmVisibility() {
+  const need = confirmNeeded();
+  pwConfirmRow.hidden = !need;
+  if (!need) { $('pwMismatch').hidden = true; }
+  updateMismatch();
+}
+function updateMismatch() {
+  const bad = confirmNeeded() && pwConfirm.value.length > 0 && pwConfirm.value !== pwInput.value;
+  $('pwMismatch').hidden = !bad;
+  pwConfirm.classList.toggle('error', bad);
+}
+function pwReady() {
+  if (!pwEnabled.checked) return true;
+  if (!pwInput.value) return false;
+  if (confirmNeeded() && pwConfirm.value !== pwInput.value) return false;
+  return true;
+}
+pwConfirm.addEventListener('input', () => { updateMismatch(); updatePackUI(); });
 
 function togglePwVisibility(input, btn) {
   const show = input.type === 'password';
@@ -508,7 +592,43 @@ function togglePwVisibility(input, btn) {
   btn.setAttribute('aria-label', btn.title);
   btn.classList.toggle('active', show);
 }
-$('pwShowBtn').addEventListener('click', () => togglePwVisibility(pwInput, $('pwShowBtn')));
+$('pwShowBtn').addEventListener('click', () => {
+  togglePwVisibility(pwInput, $('pwShowBtn'));
+  updateConfirmVisibility(); // visible password needs no confirmation field
+  updatePackUI();
+});
+
+// ----- Have I Been Pwned (optional, k-anonymity) -----
+async function sha1Hex(str) {
+  const buf = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(str));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+function resetHibp() { const r = $('hibpResult'); if (r) { r.textContent = ''; r.className = 'hibp-result'; } }
+async function runHibp() {
+  const pw = pwInput.value;
+  if (!pw) return;
+  const r = $('hibpResult');
+  r.className = 'hibp-result pending';
+  r.textContent = 'Checking…';
+  try {
+    const hash = await sha1Hex(pw);
+    const resp = await fetch('https://api.pwnedpasswords.com/range/' + hash.slice(0, 5), { headers: { 'Add-Padding': 'true' } });
+    if (!resp.ok) throw new Error();
+    const suffix = hash.slice(5);
+    let count = 0;
+    for (const line of (await resp.text()).split('\n')) {
+      const [suf, c] = line.trim().split(':');
+      if (suf === suffix) { count = parseInt(c, 10) || 0; break; }
+    }
+    if (count > 0) { r.className = 'hibp-result bad'; r.textContent = `⚠ Appears in ${count.toLocaleString()} known breaches — pick another one.`; }
+    else { r.className = 'hibp-result ok'; r.textContent = '✓ Not found in any known breach.'; }
+  } catch (e) {
+    r.className = 'hibp-result';
+    r.textContent = 'Check failed — no connection?';
+  }
+}
+$('hibpBtn').addEventListener('click', () => { if (pwInput.value) openModal('hibpModal'); });
+$('hibpConfirm').addEventListener('click', () => { $('hibpModal').classList.remove('open'); runHibp(); });
 
 function generatePassword(len = 20) {
   const sets = ['ABCDEFGHJKLMNPQRSTUVWXYZ', 'abcdefghijkmnopqrstuvwxyz', '23456789', '!#$%&*+-=?@_'];
@@ -527,7 +647,10 @@ function generatePassword(len = 20) {
 }
 $('pwGenBtn').addEventListener('click', () => {
   pwInput.value = generatePassword();
+  pwConfirm.value = pwInput.value;
   if (pwInput.type === 'password') togglePwVisibility(pwInput, $('pwShowBtn'));
+  updateConfirmVisibility();
+  resetHibp();
   updateStrength();
   updatePackUI();
   toast('Strong password generated — copy it before you zip!');
@@ -549,7 +672,14 @@ function updatePackUI() {
   const zip = fmt === 'zip';
   pwEnabled.disabled = !zip || packing;
   $('pwUnavailable').hidden = zip;
-  $('pwFields').hidden = !(zip && pwEnabled.checked);
+  const pwOn = zip && pwEnabled.checked;
+  $('pwFields').hidden = !pwOn;
+  $('hibpBox').hidden = !pwOn;
+  $('hibpBtn').disabled = !pwInput.value;
+  // Count system files we'd skip, and show it next to the toggle.
+  const junkCount = packItems.filter((i) => !i.dir && isJunk(i.path)).length;
+  $('junkRow').hidden = junkCount === 0;
+  $('junkHint').textContent = junkCount ? `(${junkCount} found: .DS_Store, Thumbs.db, …)` : '';
   const fileCount = packItems.filter((i) => !i.dir).length;
   let warn = '';
   if (fmt === 'gz' && packItems.length && (fileCount !== 1 || packItems.length > 1)) {
@@ -557,9 +687,10 @@ function updatePackUI() {
   }
   $('formatHint').textContent = warn;
   $('formatHint').hidden = !warn;
-  const needPw = zip && pwEnabled.checked && !pwInput.value;
-  packBtn.disabled = packing || !packItems.length || !!warn || needPw || (fmt === 'gz' && fileCount !== 1);
-  packBtn.textContent = needPw ? 'Enter a password first' : 'Zip it!';
+  const needPw = pwOn && !pwInput.value;
+  const mismatch = pwOn && !pwReady();
+  packBtn.disabled = packing || !packItems.length || !!warn || !pwReady() || (fmt === 'gz' && fileCount !== 1);
+  packBtn.textContent = needPw ? 'Enter a password first' : (mismatch ? 'Passwords must match' : 'Zip it!');
   updateNamePlaceholder();
 }
 
@@ -573,7 +704,7 @@ function setPacking(on) {
   packing = on;
   $('packProgress').hidden = !on;
   packDrop.classList.toggle('disabled', on);
-  [formatSelect, archiveName, pwInput, encSelect].forEach((el) => { el.disabled = on; });
+  [formatSelect, archiveName, pwInput, pwConfirm, encSelect].forEach((el) => { el.disabled = on; });
   updatePackUI();
 }
 
@@ -582,13 +713,16 @@ async function doPack() {
   if (packing || !packItems.length) return;
   const fmt = formatSelect.value;
   const usePw = fmt === 'zip' && pwEnabled.checked;
-  if (usePw && !pwInput.value) { pwInput.focus(); return; }
+  if (usePw && !pwReady()) { (pwInput.value ? pwConfirm : pwInput).focus(); return; }
   if (usePw && ratePassword(pwInput.value).level === 0 && !confirm('This password is very weak and easy to crack. Zip anyway?')) return;
-  const entries = (fmt === 'gz' ? packItems.filter((i) => !i.dir) : packItems)
-    .map((i) => ({ path: i.path, file: i.file, mtime: i.mtime }));
+  const skipJunk = $('junkSkip').checked;
+  let source = fmt === 'gz' ? packItems.filter((i) => !i.dir) : packItems.slice();
+  const skipped = skipJunk ? source.filter((i) => !i.dir && isJunk(i.path)).length : 0;
+  if (skipJunk) source = source.filter((i) => !(i.dir ? false : isJunk(i.path)));
+  const entries = source.map((i) => ({ path: i.path, file: i.file, mtime: i.mtime }));
   const fileName = currentBaseName() + EXT[fmt];
-  const inputSize = packItems.reduce((s, i) => s + i.size, 0);
-  const fileCount = packItems.filter((i) => !i.dir).length;
+  const inputSize = source.reduce((s, i) => s + i.size, 0);
+  const fileCount = source.filter((i) => !i.dir).length;
   hideResult();
   setPacking(true);
   $('packProgressBar').style.width = '0%';
@@ -609,7 +743,7 @@ async function doPack() {
       $('packProgressBar').style.width = pct.toFixed(1) + '%';
       $('packProgressText').textContent = `${Math.floor(pct)}% · ${p.label || ''}`;
     });
-    showResult(res.blob, fileName, inputSize, fileCount, fmt, usePw, performance.now() - started);
+    showResult(res.blob, fileName, inputSize, fileCount, fmt, usePw, performance.now() - started, skipped);
   } catch (err) {
     if (err.code !== 'CANCELLED') alert('Packing failed: ' + err.message);
   } finally {
@@ -618,7 +752,7 @@ async function doPack() {
 }
 $('cancelPackBtn').addEventListener('click', () => { if (packing) { resetWorker(); toast('Cancelled'); } });
 
-function showResult(blob, fileName, inputSize, fileCount, fmt, encrypted, ms) {
+function showResult(blob, fileName, inputSize, fileCount, fmt, encrypted, ms, skipped) {
   hideResult();
   resultUrl = URL.createObjectURL(blob);
   const dl = $('resultDownload');
@@ -632,6 +766,7 @@ function showResult(blob, fileName, inputSize, fileCount, fmt, encrypted, ms) {
   }
   if (encrypted) parts.push(encSelect.value === 'aes' ? 'AES-256 🔒' : 'ZipCrypto 🔒');
   parts.push(`${(ms / 1000).toFixed(1)} s`);
+  if (skipped) parts.push(`${skipped} system ${skipped === 1 ? 'file' : 'files'} skipped`);
   $('resultMeta').textContent = parts.join(' · ');
   const share = $('resultShare');
   let file = null;
@@ -674,7 +809,9 @@ function setStatus(msg, isError) {
 
 function closeArchive() {
   arc = null;
+  selected.clear();
   $('archiveCard').hidden = true;
+  $('selectHead').hidden = true;
   $('unpackList').innerHTML = '';
   unpackPw.value = '';
   setStatus('');
@@ -702,8 +839,52 @@ async function ensureOpen() {
   arc.loaded = true;
 }
 
+const selected = new Set(); // e.index of checked files
+const subfolderToggle = $('subfolderToggle');
+const canFolder = !!window.showDirectoryPicker;
+
+function visibleEntries() {
+  return arc ? arc.info.entries.filter((e) => !e.path.startsWith('__MACOSX/')) : [];
+}
+function stripArchiveExt(name) { return name.replace(/\.(zip|tar\.gz|tgz|tar|gz)$/i, '') || name; }
+
+// The single top-level folder shared by every entry, or null if files sit loose at the top.
+function commonTopFolder(entries) {
+  let top = null;
+  for (const e of entries) {
+    const parts = normalizePath(e.path, false).split('/').filter(Boolean);
+    if (!parts.length) continue;
+    if (!e.dir && parts.length === 1) return null;
+    if (top === null) top = parts[0]; else if (top !== parts[0]) return null;
+  }
+  return top;
+}
+// Prefix prepended on folder extraction: a subfolder named after the archive, unless the
+// archive already has a single top-level folder (then we'd just double-nest it).
+function destPrefix() {
+  if (!subfolderToggle.checked) return '';
+  if (commonTopFolder(visibleEntries())) return '';
+  return normalizePath(stripArchiveExt(arc.file.name).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_'), true);
+}
+function updateSubfolderName() {
+  const top = commonTopFolder(visibleEntries());
+  if (!subfolderToggle.checked) { $('subfolderName').textContent = ''; return; }
+  $('subfolderName').textContent = top ? `→ ${top}/ (already in the archive)` : `→ ${destPrefix().replace(/\/$/, '')}/`;
+}
+subfolderToggle.addEventListener('change', updateSubfolderName);
+
+function updateSelectionHead() {
+  const files = visibleEntries().filter((e) => !e.dir);
+  const n = selected.size;
+  $('selectSummary').textContent = `${n} of ${files.length} selected`;
+  const sa = $('selectAll');
+  sa.checked = n === files.length && n > 0;
+  sa.indeterminate = n > 0 && n < files.length;
+  $('extractSelectedBtn').disabled = n === 0 || unpackBusy;
+}
+
 function renderArchive() {
-  const entries = arc.info.entries.filter((e) => !e.path.startsWith('__MACOSX/'));
+  const entries = visibleEntries();
   const files = entries.filter((e) => !e.dir);
   const total = files.reduce((s, e) => s + e.size, 0);
   const encrypted = files.some((e) => e.encrypted);
@@ -711,8 +892,15 @@ function renderArchive() {
   $('arcMeta').textContent = [arc.info.format, plural(files.length, 'file'), formatSize(arc.file.size) + ' → ' + formatSize(total)].join(' · ');
   $('unpackPwWrap').hidden = !encrypted;
   $('downloadAllBtn').disabled = files.length === 0;
+  $('extractFolderBtn').hidden = !canFolder;
   $('extractFolderBtn').disabled = files.length === 0;
+  $('subfolderRow').hidden = !canFolder;
   $('archiveCard').hidden = false;
+  $('selectHead').hidden = files.length === 0;
+  updateSubfolderName();
+
+  selected.clear();
+  files.forEach((e) => selected.add(e.index));
 
   const list = $('unpackList');
   list.innerHTML = '';
@@ -720,6 +908,24 @@ function renderArchive() {
   entries.slice(0, LIST_LIMIT).forEach((e) => {
     const row = document.createElement('div');
     row.className = 'item' + (e.dir ? ' dir' : '');
+    if (!e.dir) {
+      const pick = document.createElement('input');
+      pick.type = 'checkbox';
+      pick.className = 'pick';
+      pick.checked = true;
+      pick.title = 'Select for extraction';
+      pick.addEventListener('change', () => {
+        if (pick.checked) selected.add(e.index); else selected.delete(e.index);
+        updateSelectionHead();
+      });
+      row.appendChild(pick);
+      e._pick = pick;
+    } else {
+      const spacer = document.createElement('span');
+      spacer.className = 'pick';
+      spacer.style.visibility = 'hidden';
+      row.appendChild(spacer);
+    }
     const ico = document.createElement('span');
     ico.className = 'ico';
     ico.innerHTML = e.dir ? ICON_DIR : ICON_FILE;
@@ -749,12 +955,26 @@ function renderArchive() {
   if (entries.length > LIST_LIMIT) {
     const more = document.createElement('div');
     more.className = 'more';
-    more.textContent = `…and ${(entries.length - LIST_LIMIT).toLocaleString()} more (use "Download all" or "Extract to folder")`;
+    more.textContent = `…showing ${LIST_LIMIT.toLocaleString()} of ${entries.length.toLocaleString()} — all are still selected; use "Download all" or "Extract to folder".`;
     frag.appendChild(more);
   }
   list.appendChild(frag);
+  updateSelectionHead();
   if (encrypted) unpackPw.focus();
 }
+
+$('selectAll').addEventListener('change', () => {
+  const on = $('selectAll').checked;
+  selected.clear();
+  visibleEntries().forEach((e) => { if (!e.dir) { if (on) selected.add(e.index); if (e._pick) e._pick.checked = on; } });
+  updateSelectionHead();
+});
+$('extractSelectedBtn').addEventListener('click', () => {
+  const picked = visibleEntries().filter((e) => !e.dir && selected.has(e.index));
+  if (!picked.length) return;
+  if (canFolder) extractToFolder(picked);
+  else extractToDownloads(picked);
+});
 
 async function extractBlob(e) {
   await ensureOpen();
@@ -788,14 +1008,15 @@ async function saveEntry(e, btn) {
 }
 
 function archiveFiles() {
-  return arc ? arc.info.entries.filter((e) => !e.dir && !e.path.startsWith('__MACOSX/')) : [];
+  return visibleEntries().filter((e) => !e.dir);
 }
 
-$('downloadAllBtn').addEventListener('click', async () => {
-  if (!arc || unpackBusy) return;
-  const files = archiveFiles();
-  if (files.length > 10 && !confirm(`This starts ${files.length} separate downloads (folders are not kept). Your browser may ask for permission.${window.showDirectoryPicker ? '\n\nTip: "Extract to folder…" keeps the folder structure.' : ''}\n\nContinue?`)) return;
+// Separate loose downloads (no folders possible via the browser).
+async function extractToDownloads(files) {
+  if (!arc || unpackBusy || !files.length) return;
+  if (files.length > 10 && !confirm(`This starts ${files.length} separate downloads (folders are not kept). Your browser may ask for permission.${canFolder ? '\n\nTip: "Extract to folder…" keeps the folder structure.' : ''}\n\nContinue?`)) return;
   unpackBusy = true;
+  updateSelectionHead();
   let done = 0;
   try {
     for (const e of files) {
@@ -810,17 +1031,20 @@ $('downloadAllBtn').addEventListener('click', async () => {
     handleExtractError(err);
   } finally {
     unpackBusy = false;
+    updateSelectionHead();
   }
-});
+}
 
-$('extractFolderBtn').addEventListener('click', async () => {
-  if (!arc || unpackBusy) return;
+// Folder extraction via the File System Access API — keeps the structure and
+// drops everything into a subfolder (named after the archive) when enabled.
+async function extractToFolder(files) {
+  if (!arc || unpackBusy || !files.length) return;
   let dirHandle;
   try { dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' }); }
   catch (e) { return; } // user cancelled
-  const entries = arc.info.entries.filter((e) => !e.path.startsWith('__MACOSX/'));
-  const files = entries.filter((e) => !e.dir);
+  const prefix = destPrefix();
   unpackBusy = true;
+  updateSelectionHead();
   let done = 0;
   const dirCache = new Map();
   async function getDir(parts) {
@@ -834,10 +1058,9 @@ $('extractFolderBtn').addEventListener('click', async () => {
     return handle;
   }
   try {
-    for (const e of entries) {
-      const parts = normalizePath(e.path, false).split('/').filter(Boolean);
+    for (const e of files) {
+      const parts = normalizePath(prefix + e.path, false).split('/').filter(Boolean);
       if (!parts.length) continue;
-      if (e.dir) { await getDir(parts); continue; }
       setStatus(`Extracting ${done + 1} of ${files.length} · ${e.path}`);
       const blob = await extractBlob(e);
       const dir = await getDir(parts.slice(0, -1));
@@ -847,13 +1070,18 @@ $('extractFolderBtn').addEventListener('click', async () => {
       await w.close();
       done++;
     }
-    setStatus(`Done — ${plural(done, 'file')} extracted to "${dirHandle.name}".`);
+    const where = prefix ? `${dirHandle.name}/${prefix.replace(/\/$/, '')}` : dirHandle.name;
+    setStatus(`Done — ${plural(done, 'file')} extracted to "${where}".`);
   } catch (err) {
     handleExtractError(err);
   } finally {
     unpackBusy = false;
+    updateSelectionHead();
   }
-});
+}
+
+$('downloadAllBtn').addEventListener('click', () => extractToDownloads(archiveFiles()));
+$('extractFolderBtn').addEventListener('click', () => extractToFolder(archiveFiles()));
 
 // =====================================================================
 // Global drag & drop (routes to the active mode)
@@ -909,6 +1137,8 @@ function applyDefaults() {
   $('levelLabel').textContent = levelText(settings.level);
   encSelect.value = settings.encryption;
   $('encHint').textContent = ENC_HINTS[encSelect.value];
+  $('junkSkip').checked = settings.junkSkip;
+  subfolderToggle.checked = settings.subfolder;
   updatePackUI();
   updateStrength();
 }
@@ -920,7 +1150,14 @@ $('setLevel').addEventListener('input', (e) => {
   applyDefaults();
 });
 $('setEnc').addEventListener('change', (e) => { settings.encryption = e.target.value; saveSettings(); applyDefaults(); });
+$('setJunk').addEventListener('change', (e) => { settings.junkSkip = e.target.checked; saveSettings(); applyDefaults(); });
+$('setSubfolder').addEventListener('change', (e) => { settings.subfolder = e.target.checked; saveSettings(); updateSubfolderName(); });
+// Remember the pack-side toggles when the user flips them directly.
+$('junkSkip').addEventListener('change', (e) => { settings.junkSkip = e.target.checked; saveSettings(); });
+subfolderToggle.addEventListener('change', () => { settings.subfolder = subfolderToggle.checked; saveSettings(); });
+encSelect.addEventListener('change', () => { settings.encryption = encSelect.value; saveSettings(); });
 
 // ---------- Init ----------
 applyDefaults();
+updateAboutPwList();
 renderPackList();

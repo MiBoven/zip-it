@@ -169,6 +169,24 @@ input.toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2
 .strength[data-level="3"] strong { color: var(--s3); }
 .strength[data-level="4"] strong { color: var(--s4); }
 .strength-tips:empty, #strengthTips:empty { display: none; }
+.crack-note { margin-top: 4px; font-style: italic; opacity: .85; }
+
+/* Inline hints & toggles in rows */
+.hint-inline { font-weight: 400; font-size: 12px; color: var(--text-secondary); }
+.toggle-row.field { margin-top: 14px; cursor: pointer; }
+.toggle-row.field .label-main { display: flex; flex-direction: column; gap: 1px; }
+
+/* HIBP */
+.hibp { margin-top: 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hibp-result { font-size: 12.5px; font-weight: 600; }
+.hibp-result.ok { color: var(--ok); }
+.hibp-result.bad { color: var(--danger); }
+.hibp-result.pending { color: var(--text-secondary); font-weight: 400; }
+
+/* Select-all header for unpack */
+.select-all { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; color: var(--text); }
+.select-all input, .item .pick { accent-color: var(--accent); width: 17px; height: 17px; flex-shrink: 0; cursor: pointer; }
+.item .pick { margin-right: 2px; }
 
 /* ---------- Buttons ---------- */
 button.primary {
