@@ -58,6 +58,8 @@ button.icon {
 }
 button.icon.small { width: 32px; height: 32px; }
 button.icon:active { opacity: .75; }
+/* Stateful icon buttons (e.g. password visibility) stay highlighted while active. */
+button.icon.active { background: var(--accent); color: var(--accent-text); border-color: transparent; }
 
 /* ---------- Dropdown menu ---------- */
 .menu-wrap { position: relative; }

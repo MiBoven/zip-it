@@ -47,6 +47,9 @@
 
 ### General
 - Installable as an app (PWA) on Android, iOS and desktop — **Install app** in the menu; works **offline** once loaded
+- **Android share sheet**: once installed, Zip-It appears in the system "Share" menu. Share files to it to pack them (it opens in Pack with the files loaded); share a single archive to open it straight in Unpack
+- On desktop Chrome / Edge, the installed app can also be opened by double-clicking `.zip`, `.tar`, `.gz` or `.tgz` files
+- Password-visibility buttons stay highlighted while the password is shown and use a struck-through eye while it's hidden
 - Dark mode by default, light mode via the menu
 - Fullscreen toggle (where supported)
 - Settings for the default format, compression level and encryption method (stored only in this browser)

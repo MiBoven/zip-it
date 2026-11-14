@@ -1,5 +1,10 @@
 # Changelog
 
+### 0.4.0 — 2026-11-14 — Android share sheet & toggle polish
+- **Web Share Target**: once installed, Zip-It shows up in Android's "Share" menu. Shared files open in Pack ready to zip; a single shared archive opens straight in Unpack. The service worker receives the files and hands them to the app
+- **Password-visibility buttons now show their state**: highlighted (accent colour) while the password is revealed, and a struck-through "eye-off" icon while it's hidden — on both the pack and unpack password fields
+- General rule for stateful icon buttons: an active toggle is now visibly highlighted
+
 ### 0.3.0 — 2026-11-14 — Password recovery & encryption check
 - **Password recovery** for encrypted ZIPs — if you forgot the password, Zip-It tries to find it on your device:
   - "Common passwords" mode runs the common-password list, optionally with variations (capitalisation, digits, years, leet)

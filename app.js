@@ -585,13 +585,21 @@ function pwReady() {
 }
 pwConfirm.addEventListener('input', () => { updateMismatch(); updatePackUI(); });
 
+const EYE_OPEN = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+function setEyeButton(btn, showing) {
+  btn.innerHTML = showing ? EYE_OPEN : EYE_OFF;       // struck-through eye while hidden
+  btn.title = showing ? 'Hide password' : 'Show password';
+  btn.setAttribute('aria-label', btn.title);
+  btn.classList.toggle('active', showing);             // highlight while revealing
+}
 function togglePwVisibility(input, btn) {
   const show = input.type === 'password';
   input.type = show ? 'text' : 'password';
-  btn.title = show ? 'Hide password' : 'Show password';
-  btn.setAttribute('aria-label', btn.title);
-  btn.classList.toggle('active', show);
+  setEyeButton(btn, show);
 }
+setEyeButton($('pwShowBtn'), false);
+setEyeButton($('unpackPwShowBtn'), false);
 $('pwShowBtn').addEventListener('click', () => {
   togglePwVisibility(pwInput, $('pwShowBtn'));
   updateConfirmVisibility(); // visible password needs no confirmation field
@@ -1320,6 +1328,38 @@ window.addEventListener('drop', async (e) => {
   addPackEntries(list);
 });
 
+// Received via the Android share sheet: the service worker stashed the files in a
+// cache and redirected here with ?share-target. Pick them up and route them.
+async function readSharedFiles() {
+  if (!/[?&]share-target/.test(location.search)) return;
+  try { history.replaceState(null, '', location.pathname); } catch (e) { /* ignore */ }
+  if (!('caches' in window)) return;
+  try {
+    const share = await caches.open('zipit-share');
+    const metaResp = await share.match('/__share_meta');
+    if (!metaResp) return;
+    const meta = await metaResp.json();
+    const files = [];
+    for (let i = 0; i < meta.length; i++) {
+      const r = await share.match('/__share_' + i);
+      if (!r) continue;
+      const blob = await r.blob();
+      files.push(new File([blob], meta[i].name, { type: meta[i].type || blob.type }));
+    }
+    await share.delete('/__share_meta');
+    for (let i = 0; i < meta.length; i++) await share.delete('/__share_' + i);
+    if (!files.length) return;
+    const ARCHIVE_RE = /\.(zip|tar\.gz|tgz|tar|gz)$/i;
+    if (files.length === 1 && ARCHIVE_RE.test(files[0].name)) {
+      openArchive(files[0]);
+    } else {
+      setMode('pack');
+      addPackEntries(files.map((f) => ({ path: f.name, file: f })));
+      toast(`${files.length} file${files.length > 1 ? 's' : ''} received — ready to zip`);
+    }
+  } catch (e) { /* ignore a failed hand-off */ }
+}
+
 // Opened via the installed app's file handler (desktop Chrome / Edge).
 if ('launchQueue' in window) {
   window.launchQueue.setConsumer(async (params) => {
@@ -1367,3 +1407,4 @@ encSelect.addEventListener('change', () => { settings.encryption = encSelect.val
 applyDefaults();
 updateAboutPwList();
 renderPackList();
+readSharedFiles();
