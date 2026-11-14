@@ -34,7 +34,12 @@
 ### Unpack
 - Open or drag & drop an archive: **ZIP** (stored / Deflate, AES-128/192/256, ZipCrypto, ZIP64, UTF-8 and legacy CP437 file names), **TAR**, **TAR.GZ / TGZ**, **GZ**
 - Lists all entries with size and encryption type (`__MACOSX/` metadata folders are hidden)
+- **Encryption verdict**: a banner states whether the archive uses strong AES-256 or weak ZipCrypto — the "is it good enough?" check at a glance
 - Password field for encrypted archives — wrong passwords are detected and reported
+- **Password recovery** (ZIP, encrypted): if you've forgotten the password, Zip-It can try to find it on your device. Two modes:
+  - **Common passwords** — runs through the common-password list, optionally with variations (capitalisation, appended digits/years, simple leet)
+  - **I remember part of it** — a pattern where you type the parts you remember and mark the unknown ones: `#` a digit, `?` a lowercase letter, `^` uppercase, `@` any letter, `*` letter or digit, `!` a symbol (`\\#` for a literal `#`). Example: `Sommer####` tries Sommer0000 … Sommer9999. The number of combinations and a rough time estimate are shown before you start; overly large patterns are refused
+  - Runs in its own worker with a progress bar and a working **Cancel**. On success it shows the password and can fill it into the extract field. This only helps for weak or partly-remembered passwords — a strong unknown AES password is not realistically recoverable (roughly 1,000–2,000 guesses/second for AES on a typical device)
 - **Checkbox per file** with a select-all control — **Extract selected** pulls out only the ticked files (all selected by default)
 - **Save** single files, **Download all** (separate downloads), or **Extract to folder…** (keeps the folder structure; Chrome / Edge on desktop)
 - **Into a subfolder** (default on, folder extraction only): the files land in a subfolder named after the archive — `MeineBilder.zip` → a `MeineBilder/` folder. If the archive already contains a single top-level folder, that one is used instead of nesting it again
@@ -56,6 +61,7 @@ All archive work runs in a Web Worker (`worker.js`), so the page stays responsiv
 - **Decompression** uses the browser's built-in `DecompressionStream` (`deflate-raw` and `gzip`).
 - **AES-256** follows the WinZip AE-2 specification: the key is derived with PBKDF2-HMAC-SHA1 (1,000 iterations, random 16-byte salt) via the Web Crypto API, data is encrypted with AES in CTR mode (self-written AES core, since WinZip uses a little-endian counter Web Crypto can't produce), and authenticated with HMAC-SHA1.
 - **ZipCrypto** is the traditional PKWARE stream cipher.
+- **Password recovery** reuses the same primitives: candidates are generated (dictionary mutations or a mask odometer) and checked against the smallest encrypted entry — the 2-byte verifier (AES) or 1-byte header check (ZipCrypto) as a fast prefilter, then a full HMAC (AES) or decompress-and-CRC (ZipCrypto) confirmation. It runs in a dedicated worker so Cancel can stop it instantly.
 - ZIP files are written with UTF-8 file names and extended timestamps; TAR files use POSIX ustar with PAX headers for long paths.
 - The finished archive is offered as a download via `URL.createObjectURL`.
 

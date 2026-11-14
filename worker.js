@@ -1020,6 +1020,149 @@ async function extractEntry(arc, index, password) {
 }
 
 // =====================================================================
+// Password recovery (dictionary + mask attack)
+// =====================================================================
+// A fast verifier bound to one small encrypted entry. Returns async (pwBytes) => boolean.
+async function makeVerifier(arc, e) {
+  const lh = await arc.read(e.localOff, 30);
+  if (r32(lh, 0) !== 0x04034b50) throw fail('Damaged archive (local header not found).');
+  const dataOff = e.localOff + 30 + r16(lh, 26) + r16(lh, 28);
+  const data = await arc.read(dataOff, e.csize);
+  if (e.aes) {
+    const keyLen = AES_KEYLEN[e.aes.strength];
+    if (!keyLen) throw fail('Unknown AES key strength in archive.');
+    const saltLen = keyLen / 2;
+    const salt = data.subarray(0, saltLen);
+    const pv = data.subarray(saltLen, saltLen + 2);
+    const cipher = data.subarray(saltLen + 2, data.length - 10);
+    const mac = data.subarray(data.length - 10);
+    return async (pw) => {
+      const keys = await aesDeriveKeys(pw, salt, keyLen);       // 2-byte verifier prefilter
+      if (keys.verifier[0] !== pv[0] || keys.verifier[1] !== pv[1]) return false;
+      const check = await hmacSha1x10(keys.authKey, cipher);    // strong confirm
+      for (let i = 0; i < 10; i++) if (check[i] !== mac[i]) return false;
+      return true;
+    };
+  }
+  // ZipCrypto: 1-byte header check, then full decrypt + decompress + CRC confirm.
+  if (e.flags & 0x40) throw fail('Strong (PKWARE) encryption is not supported.');
+  const check = (e.flags & 8) ? (e.time >>> 8) & 0xff : e.crc >>> 24;
+  const header = data.subarray(0, 12);
+  const body = data.subarray(12);
+  const method = e.method;
+  return async (pw) => {
+    const k = zcInit(pw);
+    let last = 0;
+    for (let i = 0; i < 12; i++) { const p = header[i] ^ zcByte(k); zcUpdate(k, p); last = p; }
+    if (last !== check) return false;
+    const out = new Uint8Array(body.length);
+    for (let i = 0; i < body.length; i++) { const p = body[i] ^ zcByte(k); zcUpdate(k, p); out[i] = p; }
+    let plain = out;
+    if (method === 8) { try { plain = await decompress(out, 'deflate-raw'); } catch (err) { return false; } }
+    else if (method !== 0) return false;
+    return crc32(plain) === e.crc;
+  };
+}
+
+const MUT_SUFFIX = ['', '1', '2', '3', '12', '123', '1234', '!', '?', '.', '01', '00', '007', '99', '69',
+  '2020', '2021', '2022', '2023', '2024', '2025', '2026', '!!', '123!', '#1'];
+function* mutate(word) {
+  const seen = new Set();
+  const caps = [word, word.charAt(0).toUpperCase() + word.slice(1), word.toUpperCase()];
+  for (const base of caps) for (const suf of MUT_SUFFIX) { const f = base + suf; if (!seen.has(f)) { seen.add(f); yield f; } }
+  const leet = word.replace(/a/g, '@').replace(/o/g, '0').replace(/i/g, '1').replace(/e/g, '3').replace(/s/g, '$');
+  if (leet !== word && !seen.has(leet)) yield leet;
+}
+function countDict(words, variations) {
+  if (!variations) return words.length;
+  let n = 0;
+  for (const w of words) for (const _ of mutate(w)) n++;
+  return n;
+}
+function* dictCandidates(words, variations) {
+  for (const w of words) {
+    if (!w) continue;
+    if (variations) { for (const f of mutate(w)) yield f; }
+    else yield w;
+  }
+}
+
+const MASK_SETS = {
+  '#': '0123456789',
+  '?': 'abcdefghijklmnopqrstuvwxyz',
+  '^': 'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+  '@': 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ',
+  '*': 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+  '!': '!@#$%&*?-_.'
+};
+// "\" escapes the next character so a literal #, ?, etc. can appear in the known part.
+function maskPlan(mask) {
+  const tmpl = [];
+  let total = 1;
+  for (let i = 0; i < mask.length; i++) {
+    const ch = mask[i];
+    if (ch === '\\' && i + 1 < mask.length) { tmpl.push({ lit: mask[++i] }); continue; }
+    if (MASK_SETS[ch]) { tmpl.push({ set: MASK_SETS[ch] }); total *= MASK_SETS[ch].length; }
+    else tmpl.push({ lit: ch });
+  }
+  return { tmpl, total };
+}
+function* maskCandidates(tmpl) {
+  const dyn = [];
+  for (let i = 0; i < tmpl.length; i++) if (tmpl[i].set) dyn.push(i);
+  const counters = dyn.map(() => 0);
+  for (;;) {
+    let s = '', d = 0;
+    for (const t of tmpl) { if (t.set) { s += t.set[counters[d]]; d++; } else s += t.lit; }
+    yield s;
+    let k = counters.length - 1;
+    while (k >= 0) { counters[k]++; if (counters[k] < tmpl[dyn[k]].set.length) break; counters[k] = 0; k--; }
+    if (k < 0) break;
+  }
+}
+
+let cancelRecover = false;
+async function recover(file, spec, post) {
+  cancelRecover = false;
+  const arc = await openArchive(file);
+  if (arc.kind !== 'zip') throw fail('Password recovery works only for ZIP archives.');
+  const enc = arc.entries.filter((e) => !e.dir && e.encrypted);
+  if (!enc.length) throw fail('This archive is not password-protected.');
+  if (enc.some((e) => e.flags & 0x40)) throw fail('Strong (PKWARE) encryption is not supported.');
+  enc.sort((a, b) => (a.csize || 0) - (b.csize || 0));
+  const verify = await makeVerifier(arc, enc[0]);
+
+  let gen, total;
+  if (spec.mode === 'mask') {
+    const { tmpl, total: tot } = maskPlan(spec.mask);
+    if (tot <= 1 && !tmpl.some((t) => t.set)) throw fail('The pattern has no unknown positions to try.');
+    if (tot > spec.cap) throw fail(`That pattern means ${tot.toLocaleString()} combinations — too many. Narrow it down.`);
+    gen = maskCandidates(tmpl); total = tot;
+  } else {
+    total = countDict(spec.words, spec.variations);
+    gen = dictCandidates(spec.words, spec.variations);
+  }
+
+  let tried = 0;
+  const start = Date.now();
+  let lastPost = 0;
+  for (const pw of gen) {
+    if (cancelRecover) { post({ type: 'recoverCancelled', tried }); return; }
+    tried++;
+    if (await verify(te.encode(pw))) { post({ type: 'recoverHit', password: pw, tried, ms: Date.now() - start }); return; }
+    if (tried % 128 === 0) {
+      const now = Date.now();
+      if (now - lastPost >= 100) {
+        lastPost = now;
+        post({ type: 'recoverProgress', tried, total, rate: Math.round(tried / ((now - start) / 1000 || 1)) });
+      }
+      await new Promise((r) => setTimeout(r)); // yield so a cancel message can arrive
+    }
+  }
+  post({ type: 'recoverDone', tried, ms: Date.now() - start });
+}
+
+// =====================================================================
 // Message handling
 // =====================================================================
 let current = null;
@@ -1049,6 +1192,13 @@ if (typeof self !== 'undefined' && typeof importScripts === 'function') {
       } else if (m.cmd === 'close') {
         current = null;
         post({ type: 'done' });
+      } else if (m.cmd === 'recover') {
+        await recover(m.file, m.spec, post);
+      } else if (m.cmd === 'cancelRecover') {
+        cancelRecover = true;
+      } else if (m.cmd === 'maskCount') {
+        const { total } = maskPlan(m.mask || '');
+        post({ type: 'maskCount', total });
       }
     } catch (err) {
       post({ type: 'error', message: (err && err.message) || String(err), code: err && err.code });

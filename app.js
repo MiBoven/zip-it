@@ -810,6 +810,9 @@ function setStatus(msg, isError) {
 function closeArchive() {
   arc = null;
   selected.clear();
+  stopRecoverWorker();
+  $('recoverModal').classList.remove('open');
+  $('encVerdict').hidden = true;
   $('archiveCard').hidden = true;
   $('selectHead').hidden = true;
   $('unpackList').innerHTML = '';
@@ -891,6 +894,8 @@ function renderArchive() {
   $('arcName').textContent = arc.file.name;
   $('arcMeta').textContent = [arc.info.format, plural(files.length, 'file'), formatSize(arc.file.size) + ' → ' + formatSize(total)].join(' · ');
   $('unpackPwWrap').hidden = !encrypted;
+  showEncVerdict(files);
+  $('recoverLink').hidden = !(encrypted && arc.info.format === 'ZIP');
   $('downloadAllBtn').disabled = files.length === 0;
   $('extractFolderBtn').hidden = !canFolder;
   $('extractFolderBtn').disabled = files.length === 0;
@@ -962,6 +967,207 @@ function renderArchive() {
   updateSelectionHead();
   if (encrypted) unpackPw.focus();
 }
+
+// Verdict on the archive's encryption strength (the "is it good enough?" check).
+function showEncVerdict(files) {
+  const v = $('encVerdict');
+  const enc = files.filter((e) => e.encrypted);
+  if (!enc.length) { v.hidden = true; return; }
+  v.hidden = false;
+  const anyZc = enc.some((e) => !e.aes);
+  if (anyZc) {
+    v.className = 'verdict warn';
+    v.innerHTML = '<strong>Weak encryption (ZipCrypto).</strong> It can be broken with known attacks no matter how good the password is — fine for casual use, not for anything sensitive. Re-pack with AES-256 for real protection.';
+  } else {
+    v.className = 'verdict good';
+    v.innerHTML = '<strong>Strong encryption (AES-256).</strong> Only the correct password opens it; its strength then depends on the password itself.';
+  }
+}
+
+// ---------- Password recovery (its own worker, so Cancel can hard-stop it) ----------
+const RECOVER_RATE = { aes: 1200, zipcrypto: 150000 }; // rough guesses/sec for time estimates
+const RECOVER_CAP = { aes: 8e6, zipcrypto: 2e9 };
+const MASK_LEN = { '#': 10, '?': 26, '^': 26, '@': 52, '*': 62, '!': 11 };
+let recoverWorker = null;
+let recovering = false;
+let recoverMode = 'dict';
+let foundPassword = null;
+
+function archiveIsAes() {
+  const enc = (arc ? arc.info.entries : []).filter((e) => e.encrypted);
+  return enc.length > 0 && enc.every((e) => e.aes);
+}
+function recoverRate() { return archiveIsAes() ? RECOVER_RATE.aes : RECOVER_RATE.zipcrypto; }
+function recoverCap() { return archiveIsAes() ? RECOVER_CAP.aes : RECOVER_CAP.zipcrypto; }
+
+function estimateTime(count) {
+  const sec = count / recoverRate();
+  return formatDuration(sec * 2); // average case ≈ half the space; show worst-ish for honesty
+}
+function maskCount(mask) {
+  let total = 1;
+  for (let i = 0; i < mask.length; i++) {
+    const ch = mask[i];
+    if (ch === '\\') { i++; continue; }
+    if (MASK_LEN[ch]) total *= MASK_LEN[ch];
+  }
+  return total;
+}
+
+$('recoverMode').addEventListener('click', (e) => {
+  const b = e.target.closest('.seg-btn');
+  if (!b) return;
+  recoverMode = b.dataset.rmode;
+  $('recoverMode').querySelectorAll('.seg-btn').forEach((x) => x.classList.toggle('active', x === b));
+  $('recoverDict').hidden = recoverMode !== 'dict';
+  $('recoverMaskPanel').hidden = recoverMode !== 'mask';
+  resetRecoverUI();
+});
+
+function recDictCount() {
+  const n = commonSet ? commonSet.size : 0;
+  return $('recVariations').checked ? n * 40 : n; // rough: ~40 mutations per word
+}
+function updateRecDictInfo() {
+  loadCommonList();
+  const n = commonSet ? commonSet.size.toLocaleString() : '…';
+  const approx = recDictCount();
+  $('recDictInfo').textContent = commonSet
+    ? `Tries ${n} common passwords${$('recVariations').checked ? ' with variations (~' + approx.toLocaleString() + ' attempts, ≈ ' + estimateTime(approx) + ')' : ''}.`
+    : 'Loading password list…';
+}
+$('recVariations').addEventListener('change', updateRecDictInfo);
+
+function updateRecMaskInfo() {
+  const mask = $('recoverMask').value;
+  const dyn = /[#?^@*!]/.test(mask.replace(/\\./g, ''));
+  if (!mask || !dyn) { $('recMaskInfo').textContent = mask ? 'Add at least one placeholder (#, ?, …) for the unknown part.' : ''; return; }
+  const c = maskCount(mask);
+  const over = c > recoverCap();
+  $('recMaskInfo').innerHTML = `${c.toLocaleString()} combinations · ≈ ${estimateTime(c)}` + (over ? ' — <span style="color:var(--danger)">too many, narrow the pattern</span>' : '');
+}
+$('recoverMask').addEventListener('input', updateRecMaskInfo);
+
+function resetRecoverUI() {
+  $('recoverProgress').hidden = true;
+  $('recoverResult').hidden = true;
+  $('recoverCancelBtn').hidden = true;
+  $('recoverUseBtn').hidden = true;
+  $('recoverStartBtn').hidden = false;
+  $('recoverStartBtn').disabled = false;
+  foundPassword = null;
+}
+
+$('recoverLink').addEventListener('click', () => {
+  resetRecoverUI();
+  recoverMode = 'dict';
+  $('recoverMode').querySelectorAll('.seg-btn').forEach((x) => x.classList.toggle('active', x.dataset.rmode === 'dict'));
+  $('recoverDict').hidden = false;
+  $('recoverMaskPanel').hidden = true;
+  updateRecDictInfo();
+  updateRecMaskInfo();
+  openModal('recoverModal');
+});
+
+function stopRecoverWorker() {
+  if (recoverWorker) { recoverWorker.terminate(); recoverWorker = null; }
+  recovering = false;
+}
+
+$('recoverStartBtn').addEventListener('click', async () => {
+  if (!arc || recovering) return;
+  let spec;
+  if (recoverMode === 'mask') {
+    const mask = $('recoverMask').value;
+    if (!mask || !/[#?^@*!]/.test(mask.replace(/\\./g, ''))) { $('recoverMask').focus(); return; }
+    if (maskCount(mask) > recoverCap()) { updateRecMaskInfo(); return; }
+    spec = { mode: 'mask', mask, cap: recoverCap() };
+  } else {
+    await loadCommonList();
+    const words = commonSet ? Array.from(commonSet) : COMMON.slice();
+    spec = { mode: 'dict', words, variations: $('recVariations').checked };
+  }
+  startRecover(spec);
+});
+
+function startRecover(spec) {
+  stopRecoverWorker();
+  recovering = true;
+  foundPassword = null;
+  $('recoverStartBtn').hidden = true;
+  $('recoverCancelBtn').hidden = false;
+  $('recoverUseBtn').hidden = true;
+  $('recoverResult').hidden = true;
+  $('recoverProgress').hidden = false;
+  $('recoverBar').style.width = '0%';
+  $('recoverStatus').textContent = 'Starting…';
+  recoverWorker = new Worker('worker.js');
+  recoverWorker.onmessage = (e) => {
+    const m = e.data;
+    if (m.type === 'recoverProgress') {
+      const pct = m.total ? Math.min(100, (m.tried / m.total) * 100) : 0;
+      $('recoverBar').style.width = (m.total ? pct : 100) + '%';
+      $('recoverBar').style.opacity = m.total ? 1 : 0.5;
+      $('recoverStatus').textContent = `${m.tried.toLocaleString()}${m.total ? ' / ' + m.total.toLocaleString() : ''} tried · ${m.rate.toLocaleString()}/s`;
+    } else if (m.type === 'recoverHit') {
+      finishRecover(m.password, m);
+    } else if (m.type === 'recoverDone') {
+      recovering = false;
+      stopRecoverWorker();
+      $('recoverProgress').hidden = true;
+      $('recoverStartBtn').hidden = false;
+      $('recoverCancelBtn').hidden = true;
+      const res = $('recoverResult');
+      res.hidden = false;
+      res.className = 'verdict warn';
+      res.innerHTML = `<strong>Not found.</strong> Tried ${m.tried.toLocaleString()} passwords. ${recoverMode === 'mask' ? 'Try a different pattern' : 'Try the “I remember part of it” mode'} if you recall more.`;
+    } else if (m.type === 'recoverCancelled') {
+      recovering = false;
+      stopRecoverWorker();
+      resetRecoverUI();
+    } else if (m.type === 'error') {
+      recovering = false;
+      stopRecoverWorker();
+      $('recoverProgress').hidden = true;
+      $('recoverStartBtn').hidden = false;
+      $('recoverCancelBtn').hidden = true;
+      const res = $('recoverResult');
+      res.hidden = false;
+      res.className = 'verdict warn';
+      res.innerHTML = `<strong>Couldn't run.</strong> ${m.message}`;
+    }
+  };
+  recoverWorker.onerror = (e) => { e.preventDefault(); recovering = false; stopRecoverWorker(); };
+  recoverWorker.postMessage({ id: 1, cmd: 'recover', file: arc.file, spec });
+}
+
+function finishRecover(pw, m) {
+  recovering = false;
+  stopRecoverWorker();
+  foundPassword = pw;
+  $('recoverProgress').hidden = true;
+  $('recoverCancelBtn').hidden = true;
+  $('recoverStartBtn').hidden = false;
+  $('recoverUseBtn').hidden = false;
+  const res = $('recoverResult');
+  res.hidden = false;
+  res.className = 'verdict good';
+  const rating = ratePassword(pw);
+  res.innerHTML = `<strong>Found it!</strong> The password is <code>${pw.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))}</code><br>` +
+    `<span class="hint" style="margin-top:6px;display:block">Found after ${m.tried.toLocaleString()} tries. This password rates “${STRENGTH_LABELS[rating.level]}” — ${rating.level < 2 ? 'weak enough that recovery like this works; pick a stronger one next time.' : 'if you re-pack, it holds up reasonably well.'}</span>`;
+}
+
+$('recoverCancelBtn').addEventListener('click', () => {
+  if (recoverWorker && recovering) { recoverWorker.postMessage({ id: 2, cmd: 'cancelRecover' }); recovering = false; stopRecoverWorker(); resetRecoverUI(); }
+});
+$('recoverUseBtn').addEventListener('click', () => {
+  if (foundPassword != null) { unpackPw.value = foundPassword; unpackPw.classList.remove('error'); }
+  $('recoverModal').classList.remove('open');
+  toast('Password filled in — now extract your files');
+});
+$('recoverModal').addEventListener('click', (e) => {
+  if ((e.target === $('recoverModal') || e.target.hasAttribute('data-close'))) stopRecoverWorker();
+});
 
 $('selectAll').addEventListener('change', () => {
   const on = $('selectAll').checked;

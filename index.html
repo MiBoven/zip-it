@@ -207,6 +207,7 @@
       </div>
       <button type="button" class="remove" id="closeArchiveBtn" title="Close archive" aria-label="Close archive">&times;</button>
     </div>
+    <div class="verdict" id="encVerdict" hidden></div>
     <div id="unpackPwWrap" hidden>
       <p class="hint lock-hint">🔒 This archive is password-protected.</p>
       <div class="row pw-row">
@@ -215,6 +216,7 @@
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
       </div>
+      <button type="button" class="link-btn" id="recoverLink">Forgot the password? Try to recover it…</button>
     </div>
     <label class="toggle-row field" id="subfolderRow" for="subfolderToggle">
       <span class="label-main">Into a subfolder <span class="hint-inline" id="subfolderName"></span></span>
@@ -234,7 +236,7 @@
   <div class="list" id="unpackList"></div>
 </section>
 
-<footer>Zip-It · v0.2.0</footer>
+<footer>Zip-It · v0.3.0</footer>
 
 <!-- ===================== MODALS ===================== -->
 <div class="modal-bg" id="settingsModal">
@@ -277,6 +279,50 @@
   </div>
 </div>
 
+<div class="modal-bg" id="recoverModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="recoverTitle">
+    <h2 id="recoverTitle">Recover password</h2>
+    <p class="hint">Zip-It tries passwords against the archive, here on your device. This only has a chance for weak or partly-remembered passwords — a strong unknown password can't be recovered.</p>
+    <div class="segment" id="recoverMode">
+      <button type="button" class="seg-btn active" data-rmode="dict">Common passwords</button>
+      <button type="button" class="seg-btn" data-rmode="mask">I remember part of it</button>
+    </div>
+
+    <div id="recoverDict">
+      <label class="toggle-row" for="recVariations" style="cursor:pointer">
+        <span class="label-main">Also try variations <span class="hint-inline">capitalisation, digits, years, leet</span></span>
+        <input type="checkbox" class="toggle" id="recVariations" checked>
+      </label>
+      <p class="hint" id="recDictInfo"></p>
+    </div>
+
+    <div id="recoverMaskPanel" hidden>
+      <label class="label-main" for="recoverMask">Pattern</label>
+      <input type="text" id="recoverMask" placeholder="e.g. Sommer#### or Hallo?#" spellcheck="false" autocomplete="off" autocapitalize="off" style="width:100%;margin-top:6px">
+      <table class="mask-legend">
+        <tr><td>#</td><td>a digit 0–9</td><td>?</td><td>a lowercase letter</td></tr>
+        <tr><td>^</td><td>an uppercase letter</td><td>@</td><td>any letter</td></tr>
+        <tr><td>*</td><td>letter or digit</td><td>!</td><td>a symbol</td></tr>
+      </table>
+      <p class="hint">Everything else is taken literally. Use <code>\\#</code> for a real <code>#</code>. Example: <code>Sommer####</code> tries Sommer0000 … Sommer9999.</p>
+      <p class="hint" id="recMaskInfo"></p>
+    </div>
+
+    <div class="progress-card" id="recoverProgress" hidden>
+      <div class="progress-bar"><span id="recoverBar"></span></div>
+      <p class="progress-text" id="recoverStatus"></p>
+    </div>
+    <div class="verdict" id="recoverResult" hidden></div>
+
+    <div class="btn-row">
+      <button type="button" class="btn primary-btn" id="recoverStartBtn">Start</button>
+      <button type="button" class="btn" id="recoverCancelBtn" hidden>Cancel</button>
+      <button type="button" class="btn" id="recoverUseBtn" hidden>Use this password</button>
+      <button type="button" class="btn" data-close id="recoverCloseBtn">Close</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-bg" id="hibpModal">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="hibpTitle">
     <h2 id="hibpTitle">Check against data leaks</h2>
@@ -297,7 +343,7 @@
       <div>
         <h2 id="aboutTitle">Zip-It</h2>
         <p class="brand-sub">The Zipper for your Files</p>
-        <p class="version">Version 0.2.0</p>
+        <p class="version">Version 0.3.0</p>
       </div>
     </div>
     <p>Packs files and folders into ZIP, TAR, TAR.GZ and GZ archives — and unpacks them again. Everything happens on your device: no file ever leaves your browser, and the app works offline once loaded.</p>

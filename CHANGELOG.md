@@ -1,5 +1,14 @@
 # Changelog
 
+### 0.3.0 — 2026-11-14 — Password recovery & encryption check
+- **Password recovery** for encrypted ZIPs — if you forgot the password, Zip-It tries to find it on your device:
+  - "Common passwords" mode runs the common-password list, optionally with variations (capitalisation, digits, years, leet)
+  - "I remember part of it" mode takes a pattern (`#` digit, `?` lowercase, `^` uppercase, `@` letter, `*` letter/digit, `!` symbol; `\#` for a literal `#`) and brute-forces only the unknown positions — e.g. `Sommer####`
+  - Shows the combination count and a time estimate up front, refuses overly large patterns, runs in a dedicated worker with a progress bar and a working Cancel, and can fill a found password straight into the extract field
+  - Works against AES-256 and ZipCrypto; only realistic for weak or partly-remembered passwords
+- **Encryption verdict banner** when opening an archive — states plainly whether it's strong (AES-256) or weak (ZipCrypto), so you can judge whether the protection is good enough
+- A recovered password is also rated for strength in the result
+
 ### 0.2.0 — 2026-11-14 — Extraction, selection & password tools
 - **Encryption picker reworded** to "Secure — AES-256" / "Compatible — ZipCrypto (opens on Windows/Mac)"; the choice is remembered as the default. Clears up the Windows `0x80004005` error, which happens because Windows Explorer can't open AES-256 — use ZipCrypto for Explorer compatibility
 - **Unpack: subfolder option** (default on) — files extract into a subfolder named after the archive; if the archive already has a single top-level folder, that one is used instead of double-nesting
