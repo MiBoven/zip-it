@@ -1,5 +1,11 @@
 # Changelog
 
+### 0.7.1 — 2026-11-15 — Help panel, setting explanations & safer clipboard
+- Added a **Help & info** panel to the menu (collapsible sections) covering getting started, packing, unpacking/converting, passwords &amp; encryption, password recovery, compression &amp; formats, and privacy — replaces the earlier “Formats &amp; compression” dialog and folds it in
+- Every **Settings** item now has a short explanation (what system files are, what AES-256 vs ZipCrypto means, what verify does, …)
+- **Settings → Clear saved recovery progress** removes any paused password-recovery data (it's stored in the browser, keyed to the archive, with no passwords or file contents)
+- **Copy password** now clears the clipboard again after 45 s (toggle in Settings), but only if the clipboard still holds that password, so it never wipes something you copied in the meantime
+
 ### 0.7.0 — 2026-11-14 — Unpack XZ / LZMA & a formats guide
 - **Unpack XZ, TAR.XZ and LZMA** (`.xz`, `.txz`, `.tar.xz`, `.lzma`). Zip-It now includes a self-written LZMA/LZMA2/XZ decoder (no third-party libraries), validated byte-for-byte against the `xz` reference tool. Creating XZ/LZMA is intentionally not offered — a good LZMA compressor is impractical to run in the browser
 - GZ and TAR.GZ (gzip) were already supported for both packing and unpacking

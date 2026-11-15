@@ -48,7 +48,7 @@
           <span>Dark mode</span><span class="switch" aria-hidden="true"></span>
         </button>
         <button class="menu-item" id="installItem" role="menuitem"><span>Install app</span></button>
-        <button class="menu-item" id="formatsItem" role="menuitem"><span>Formats &amp; compression</span></button>
+        <button class="menu-item" id="helpItem" role="menuitem"><span>Help &amp; info</span></button>
         <button class="menu-item" id="settingsItem" role="menuitem"><span>Settings</span></button>
         <button class="menu-item" id="aboutItem" role="menuitem"><span>About</span></button>
       </div>
@@ -245,7 +245,7 @@
   <div class="list" id="unpackList"></div>
 </section>
 
-<footer>Zip-It · v0.7.0</footer>
+<footer>Zip-It · v0.7.1</footer>
 
 <!-- ===================== MODALS ===================== -->
 <div class="modal-bg" id="settingsModal">
@@ -260,6 +260,7 @@
         <option value="gz">GZ</option>
       </select>
     </div>
+    <p class="hint">The format pre-selected when you start. See Help &amp; info → Formats for what each is best for.</p>
     <div class="field">
       <div class="row">
         <label class="label-main" for="setLevel">Default compression</label>
@@ -268,6 +269,7 @@
       </div>
       <input type="range" id="setLevel" min="0" max="9" value="6">
     </div>
+    <p class="hint">How hard to try to shrink data. Higher is smaller but slower, and only helps on compressible files — not on photos or videos.</p>
     <div class="row field">
       <label class="label-main" for="setEnc">Default encryption</label>
       <select id="setEnc">
@@ -275,19 +277,33 @@
         <option value="zipcrypto">ZipCrypto</option>
       </select>
     </div>
+    <p class="hint"><strong>AES-256</strong> is strong, modern encryption (needs 7-Zip, Keka &amp; co. — not Windows Explorer). <strong>ZipCrypto</strong> opens everywhere incl. Windows, but is weak. More in Help &amp; info.</p>
     <label class="toggle-row field" for="setJunk">
       <span class="label-main">Skip system files when packing</span>
       <input type="checkbox" class="toggle" id="setJunk" checked>
     </label>
+    <p class="hint">Leaves out files the operating system hides in folders — <code>.DS_Store</code> (macOS), <code>Thumbs.db</code> / <code>desktop.ini</code> (Windows), <code>__MACOSX</code> — that you rarely want in an archive.</p>
     <label class="toggle-row field" for="setSubfolder">
       <span class="label-main">Unpack into a subfolder</span>
       <input type="checkbox" class="toggle" id="setSubfolder" checked>
     </label>
+    <p class="hint">When extracting to a folder, put everything in a subfolder named after the archive, so files don't land loose among your downloads.</p>
     <label class="toggle-row field" for="setVerify">
       <span class="label-main">Verify archives after packing</span>
       <input type="checkbox" class="toggle" id="setVerify">
     </label>
-    <p class="hint">Settings are stored only in this browser.</p>
+    <p class="hint">Re-reads the finished archive to catch a bad write before you delete the originals. Slower, off by default.</p>
+    <label class="toggle-row field" for="setClipClear">
+      <span class="label-main">Clear copied passwords after 45s</span>
+      <input type="checkbox" class="toggle" id="setClipClear" checked>
+    </label>
+    <p class="hint">After you use “Copy password”, Zip-It clears it from the clipboard again shortly after — but only if you haven't copied something else in the meantime.</p>
+
+    <h3 class="sec">Stored data</h3>
+    <p class="hint">Saved password-recovery progress is kept in this browser so you can resume it later (no passwords or file contents are stored).</p>
+    <button type="button" class="btn" id="clearRecoverBtn" style="width:100%">Clear saved recovery progress</button>
+
+    <p class="hint" style="margin-top:14px">Settings and stored data live only in this browser.</p>
     <button type="button" class="close" data-close>Close</button>
   </div>
 </div>
@@ -417,7 +433,7 @@
       <div>
         <h2 id="aboutTitle">Zip-It</h2>
         <p class="brand-sub">The Zipper for your Files</p>
-        <p class="version">Version 0.7.0</p>
+        <p class="version">Version 0.7.1</p>
       </div>
     </div>
     <p>Packs files and folders into ZIP, TAR, TAR.GZ and GZ archives — and unpacks them again. Everything happens on your device: no file ever leaves your browser, and the app works offline once loaded.</p>
@@ -433,36 +449,98 @@
   </div>
 </div>
 
-<div class="modal-bg" id="formatsModal">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="formatsTitle">
-    <h2 id="formatsTitle">Formats &amp; compression</h2>
+<div class="modal-bg" id="helpModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+    <h2 id="helpTitle">Help &amp; info</h2>
+    <div class="accordion" id="accordion">
 
-    <h3 class="sec">What Zip-It can do</h3>
-    <table>
-      <tr><td>Pack</td><td>ZIP, TAR.GZ, TAR, GZ</td></tr>
-      <tr><td>Unpack</td><td>ZIP, TAR, TAR.GZ / TGZ, GZ, XZ / TAR.XZ, LZMA</td></tr>
-    </table>
+      <div class="acc-item">
+        <button type="button" class="acc-head">Getting started<span class="acc-ico">+</span></button>
+        <div class="acc-body" hidden>
+          <ul>
+            <li><strong>Pack</strong> bundles files into one archive; <strong>Unpack</strong> opens an existing one. Switch at the top.</li>
+            <li>Choose, drag &amp; drop, or drop a whole folder — the folder structure is kept.</li>
+            <li>The <strong>installed app</strong> (menu → Install app) works offline and appears in Android's share menu, so you can share files straight to Zip-It.</li>
+            <li>On phones: the <strong>Files</strong> picker keeps original file names; the photo picker may not.</li>
+          </ul>
+        </div>
+      </div>
 
-    <h3 class="sec">Why some files barely shrink</h3>
-    <p>Packing is <strong>lossless</strong>: it finds repetition and stores it compactly, without changing your data. That works well on things that have lots of repetition, and barely at all on data that's already compressed.</p>
-    <table>
-      <tr><td>Shrinks well</td><td>Text, code, CSV/JSON, logs, XML, uncompressed images (BMP), many documents</td></tr>
-      <tr><td>Barely shrinks</td><td>JPEG/PNG/HEIC photos, MP4/MOV videos, MP3/AAC audio, PDFs, and other archives — these are already compressed</td></tr>
-    </table>
-    <p class="hint">A phone photo (JPEG) typically gets only ~2% smaller even with the strongest compressor — that's normal. Zip-It detects already-compressed files and stores them as-is instead of wasting time, which is why you see “no size gain”.</p>
-    <p class="hint">To actually make a photo smaller you need <strong>lossy</strong> re-encoding (lower quality or resolution) — that's a job for an image tool, not a packer, because it changes the image.</p>
+      <div class="acc-item">
+        <button type="button" class="acc-head">Packing files<span class="acc-ico">+</span></button>
+        <div class="acc-body" hidden>
+          <ul>
+            <li><strong>Archive name</strong>: defaults to <code>zipped-it_[date]-[time]</code>; the extension is added for you.</li>
+            <li><strong>Format</strong>: ZIP, TAR.GZ, TAR or GZ — see “Compression &amp; formats” below.</li>
+            <li><strong>Compression</strong>: Store (0) to Maximum (9). Higher = smaller but slower, and only helps on compressible data.</li>
+            <li><strong>Skip system files</strong>: leaves out OS clutter like <code>.DS_Store</code> and <code>Thumbs.db</code>.</li>
+            <li><strong>Verify after packing</strong>: re-reads the finished archive to catch a bad write before you delete the originals.</li>
+          </ul>
+        </div>
+      </div>
 
-    <h3 class="sec">Which format to pick</h3>
-    <table>
-      <tr><td>ZIP</td><td>The universal default. Opens everywhere. Optional password (AES-256 or ZipCrypto). Each file compressed separately.</td></tr>
-      <tr><td>TAR.GZ</td><td>Common on Linux/macOS. Bundles everything into one TAR, then compresses the whole thing — often a bit smaller than ZIP for many small files. No password.</td></tr>
-      <tr><td>TAR</td><td>Just bundles, no compression. Useful when the content won't shrink anyway, or as an intermediate.</td></tr>
-      <tr><td>GZ</td><td>A single compressed file (no folders).</td></tr>
-      <tr><td>XZ / LZMA</td><td>Strong compression (LZMA). Zip-It can <em>unpack</em> these; it doesn't create them, because a good LZMA compressor is impractical to run in the browser.</td></tr>
-    </table>
+      <div class="acc-item">
+        <button type="button" class="acc-head">Unpacking &amp; converting<span class="acc-ico">+</span></button>
+        <div class="acc-body" hidden>
+          <ul>
+            <li>Tick individual files and use <strong>Extract selected</strong>, or <strong>Download all</strong> / <strong>Extract to folder…</strong> (Chrome/Edge on desktop keep the folder structure).</li>
+            <li><strong>Into a subfolder</strong> puts everything in a folder named after the archive, so files don't land loose in your downloads.</li>
+            <li><strong>Convert / re-save</strong> turns an opened archive into another format and/or changes the password (add, change, remove). The original stays untouched.</li>
+          </ul>
+        </div>
+      </div>
 
-    <h3 class="sec">The compression slider</h3>
-    <p><strong>Store (0)</strong> doesn't compress at all — fast, for data that won't shrink. <strong>Fast (1–3)</strong>, <strong>Normal (4–6)</strong> and <strong>Maximum (7–9)</strong> trade speed for size. Higher levels are slower and only help on compressible data; on photos and videos they make no real difference.</p>
+      <div class="acc-item">
+        <button type="button" class="acc-head">Passwords &amp; encryption<span class="acc-ico">+</span></button>
+        <div class="acc-body" hidden>
+          <p><strong>AES-256</strong> is strong, modern encryption. Only the right password can open the archive. It opens with 7-Zip, WinRAR, Keka, PeaZip and most Android file managers — but <em>not</em> with the built-in Windows Explorer or macOS Archive Utility.</p>
+          <p><strong>ZipCrypto</strong> is the old ZIP encryption. It opens everywhere, including Windows Explorer, but is cryptographically weak and can be broken regardless of the password — use it only for low-risk files.</p>
+          <p>The <strong>strength meter</strong> estimates how hard a password is to guess (assuming one high-end graphics card) and checks it against a list of common passwords. The optional <strong>Have I Been Pwned</strong> button checks whether it appears in public breaches, sending only a short hash prefix — never the password.</p>
+          <p class="hint">Lost a password? You can't open an AES/ZipCrypto archive without it — but see Password recovery.</p>
+        </div>
+      </div>
+
+      <div class="acc-item">
+        <button type="button" class="acc-head">Password recovery<span class="acc-ico">+</span></button>
+        <div class="acc-body" hidden>
+          <p>If you forgot a ZIP's password, Zip-It can try to find it on your device. <strong>Common passwords</strong> runs a list (optionally with variations); <strong>I remember part of it</strong> takes a pattern like <code>Sommer####</code> and tries the unknown positions. This only works for weak or partly-remembered passwords — a strong unknown password stays unrecoverable.</p>
+          <p>You can <strong>Pause</strong> and resume any time. Progress is saved in this browser, tied to the archive (its name and size) — <em>no passwords and no file contents are stored</em>. Re-open the same archive and Zip-It offers to resume where it left off.</p>
+          <p><strong>Clearing it:</strong> it clears automatically once the password is found or the search is exhausted, or when you choose “Start over”. To wipe all saved recovery data at once, use <strong>Settings → Clear saved recovery progress</strong>.</p>
+        </div>
+      </div>
+
+      <div class="acc-item">
+        <button type="button" class="acc-head">Compression &amp; formats<span class="acc-ico">+</span></button>
+        <div class="acc-body" hidden>
+          <p>Packing is <strong>lossless</strong> — it finds repetition and stores it compactly without changing your data. So it shrinks some things a lot and others barely at all:</p>
+          <table>
+            <tr><td>Shrinks well</td><td>Text, code, CSV/JSON, logs, XML, uncompressed images (BMP), many documents</td></tr>
+            <tr><td>Barely shrinks</td><td>JPEG/PNG/HEIC photos, MP4/MOV videos, MP3/AAC audio, PDFs, other archives — already compressed</td></tr>
+          </table>
+          <p class="hint">A phone photo typically gets only ~2% smaller even with the strongest compressor — that's normal. Zip-It stores already-compressed files as-is instead of wasting time, which is why you may see “no size gain”. Making a photo smaller needs <strong>lossy</strong> re-encoding (an image tool's job), because it changes the image.</p>
+          <table>
+            <tr><td>ZIP</td><td>Universal default, opens everywhere, optional password, each file compressed separately.</td></tr>
+            <tr><td>TAR.GZ</td><td>Bundles everything then compresses the whole — often smaller than ZIP for many small files. No password.</td></tr>
+            <tr><td>TAR</td><td>Bundles only, no compression.</td></tr>
+            <tr><td>GZ</td><td>A single compressed file (no folders).</td></tr>
+            <tr><td>XZ / LZMA</td><td>Strong LZMA compression. Zip-It can <em>unpack</em> these; it doesn't create them.</td></tr>
+          </table>
+        </div>
+      </div>
+
+      <div class="acc-item">
+        <button type="button" class="acc-head">Privacy &amp; stored data<span class="acc-ico">+</span></button>
+        <div class="acc-body" hidden>
+          <ul>
+            <li>Everything happens on your device. <strong>No file is ever uploaded</strong>, there are no accounts, no tracking and no cookies.</li>
+            <li>The only network request is the optional Have I Been Pwned check, and only when you tap it.</li>
+            <li>Stored in this browser only: your theme and default settings, and any paused recovery progress. Clear the latter in Settings.</li>
+            <li><strong>Copied passwords</strong> can be auto-cleared from the clipboard a short time after “Copy password” (Settings), unless you've copied something else since.</li>
+          </ul>
+        </div>
+      </div>
+
+    </div>
     <button type="button" class="close" data-close>Close</button>
   </div>
 </div>

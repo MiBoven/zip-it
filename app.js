@@ -5,7 +5,7 @@ const APP_VERSION = '0.2.0';
 const $ = (id) => document.getElementById(id);
 
 // ---------- Settings ----------
-const DEFAULTS = { format: 'zip', level: 6, encryption: 'aes', junkSkip: true, subfolder: true, verifyAfter: false };
+const DEFAULTS = { format: 'zip', level: 6, encryption: 'aes', junkSkip: true, subfolder: true, verifyAfter: false, clipClear: true };
 function loadSettings() {
   try { return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem('zipit-settings') || '{}')); }
   catch (e) { return Object.assign({}, DEFAULTS); }
@@ -112,7 +112,17 @@ document.querySelectorAll('.modal-bg').forEach((bg) => {
   });
 });
 $('aboutItem').addEventListener('click', () => openModal('aboutModal'));
-$('formatsItem').addEventListener('click', () => openModal('formatsModal'));
+$('helpItem').addEventListener('click', () => openModal('helpModal'));
+
+// Accordion: one section open at a time.
+$('accordion').addEventListener('click', (e) => {
+  const head = e.target.closest('.acc-head');
+  if (!head) return;
+  const body = head.nextElementSibling;
+  const open = body.hidden;
+  $('accordion').querySelectorAll('.acc-body').forEach((b) => { b.hidden = true; b.previousElementSibling.querySelector('.acc-ico').textContent = '+'; });
+  if (open) { body.hidden = false; head.querySelector('.acc-ico').textContent = '–'; }
+});
 $('settingsItem').addEventListener('click', () => {
   $('setFormat').value = settings.format;
   $('setLevel').value = settings.level;
@@ -121,6 +131,8 @@ $('settingsItem').addEventListener('click', () => {
   $('setJunk').checked = settings.junkSkip;
   $('setSubfolder').checked = settings.subfolder;
   $('setVerify').checked = settings.verifyAfter;
+  $('setClipClear').checked = settings.clipClear;
+  updateClearRecoverBtn();
   openModal('settingsModal');
 });
 
@@ -671,10 +683,37 @@ $('pwGenBtn').addEventListener('click', () => {
   updatePackUI();
   toast('Strong password generated — copy it before you zip!');
 });
+// Copy to clipboard, and (if enabled) clear it again after a delay — but only if the
+// clipboard still holds our password, so we never wipe something the user copied since.
+let clipClearTimer = null;
+const CLIP_CLEAR_MS = 45000;
+// Returns false if it couldn't act yet because the page wasn't focused (clipboard needs focus).
+async function tryClearClip(text) {
+  if (!document.hasFocus()) return false;
+  try {
+    const cur = await navigator.clipboard.readText();
+    if (cur === text) await navigator.clipboard.writeText('');
+  } catch (e) { /* read not permitted — leave the clipboard as is */ }
+  return true;
+}
+async function copyPassword(text) {
+  try { await navigator.clipboard.writeText(text); }
+  catch (e) { return false; }
+  clearTimeout(clipClearTimer);
+  if (settings.clipClear) {
+    clipClearTimer = setTimeout(async () => {
+      if (!(await tryClearClip(text))) {
+        // not focused yet — clear as soon as the page regains focus
+        window.addEventListener('focus', () => tryClearClip(text), { once: true });
+      }
+    }, CLIP_CLEAR_MS);
+  }
+  return true;
+}
 $('pwCopyBtn').addEventListener('click', async () => {
   if (!pwInput.value) return;
-  try { await navigator.clipboard.writeText(pwInput.value); toast('Password copied'); }
-  catch (e) { pwInput.select(); toast('Copy failed — please copy manually'); }
+  if (await copyPassword(pwInput.value)) toast(settings.clipClear ? 'Password copied — clears in 45s' : 'Password copied');
+  else { pwInput.select(); toast('Copy failed — please copy manually'); }
 });
 
 // ----- Format -----
@@ -1515,6 +1554,29 @@ $('setJunk').addEventListener('change', (e) => { settings.junkSkip = e.target.ch
 $('setSubfolder').addEventListener('change', (e) => { settings.subfolder = e.target.checked; saveSettings(); updateSubfolderName(); });
 // Remember the pack-side toggles when the user flips them directly.
 $('setVerify').addEventListener('change', (e) => { settings.verifyAfter = e.target.checked; saveSettings(); applyDefaults(); });
+$('setClipClear').addEventListener('change', (e) => { settings.clipClear = e.target.checked; saveSettings(); });
+
+// Count and clear all saved password-recovery progress.
+function countSavedRecover() {
+  let n = 0;
+  try { for (let i = 0; i < localStorage.length; i++) if (localStorage.key(i).startsWith('zipit-recover:')) n++; } catch (e) { /* ignore */ }
+  return n;
+}
+function updateClearRecoverBtn() {
+  const n = countSavedRecover();
+  const btn = $('clearRecoverBtn');
+  btn.textContent = n ? `Clear saved recovery progress (${n})` : 'Clear saved recovery progress';
+  btn.disabled = n === 0;
+}
+$('clearRecoverBtn').addEventListener('click', () => {
+  try {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k.startsWith('zipit-recover:')) keys.push(k); }
+    keys.forEach((k) => localStorage.removeItem(k));
+    toast(`Cleared ${keys.length} saved recovery ${keys.length === 1 ? 'entry' : 'entries'}`);
+  } catch (e) { /* ignore */ }
+  updateClearRecoverBtn();
+});
 $('junkSkip').addEventListener('change', (e) => { settings.junkSkip = e.target.checked; saveSettings(); });
 subfolderToggle.addEventListener('change', () => { settings.subfolder = subfolderToggle.checked; saveSettings(); });
 $('verifyAfter').addEventListener('change', (e) => { settings.verifyAfter = e.target.checked; saveSettings(); });

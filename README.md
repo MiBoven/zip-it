@@ -55,6 +55,9 @@
 - On desktop Chrome / Edge, the installed app can also be opened by double-clicking `.zip`, `.tar`, `.gz` or `.tgz` files
 - Password-visibility buttons stay highlighted while the password is shown and use a struck-through eye while it's hidden
 - Password fields are masked plain-text inputs (via `-webkit-text-security`), not real `password` inputs — so the browser never offers to save them and never autofills them
+- **Help & info** panel in the menu: a collapsible guide covering getting started, packing, unpacking/converting, passwords &amp; encryption, password recovery (incl. how progress is stored and cleared), compression &amp; formats, and privacy
+- Each setting has a short explanation, and **Settings → Clear saved recovery progress** wipes any paused recovery data
+- **Copy password** can auto-clear the clipboard after 45 s (Settings), but only if the clipboard still holds that password — so it never wipes something you copied since
 - Dark mode by default, light mode via the menu
 - Fullscreen toggle (where supported)
 - Settings for the default format, compression level and encryption method (stored only in this browser)

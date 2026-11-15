@@ -1,5 +1,5 @@
 /* Zip-It service worker — offline support (stale-while-revalidate). */
-const CACHE = 'zipit-v0.7.0';
+const CACHE = 'zipit-v0.7.1';
 const KEEP = [CACHE, 'zipit-share'];
 const ASSETS = [
   '/',

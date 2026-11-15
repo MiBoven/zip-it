@@ -305,6 +305,23 @@ footer { text-align: center; color: var(--text-secondary); font-size: 12px; marg
 }
 .modal h2 { font-size: 17px; margin: 0 0 12px; }
 .modal h3.sec { font-size: 14px; margin: 18px 0 8px; color: var(--accent); }
+
+/* Accordion (Help & info) */
+.accordion { margin: 4px 0 8px; }
+.acc-item { border-top: 1px solid var(--border); }
+.acc-item:last-child { border-bottom: 1px solid var(--border); }
+.acc-head {
+  width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  background: none; border: none; color: var(--text); font-size: 14px; font-weight: 600;
+  text-align: left; padding: 14px 2px; cursor: pointer;
+}
+.acc-head:hover { color: var(--accent); }
+.acc-ico { color: var(--text-secondary); font-size: 20px; font-weight: 400; flex-shrink: 0; line-height: 1; }
+.acc-body { padding: 0 2px 14px; font-size: 13px; line-height: 1.55; }
+.acc-body ul { margin: 0; padding-left: 18px; }
+.acc-body li { margin-bottom: 7px; }
+.acc-body p { margin: 0 0 10px; }
+.acc-body table { margin: 0 0 10px; }
 .modal p { margin: 0 0 12px; }
 .modal table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 12px; }
 .modal td { padding: 5px 6px; vertical-align: top; border-top: 1px solid var(--border); }
