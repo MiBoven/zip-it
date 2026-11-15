@@ -1,5 +1,8 @@
 # Changelog
 
+### 0.5.1 — 2026-11-14 — Repeat-password field polish
+- The repeat-password field no longer appears and disappears (which made the page jump). It now stays in place and simply greys out when the password is revealed, and it's the same width as the password field above it
+
 ### 0.5.0 — 2026-11-14 — Convert, verify & masked password fields
 - **Convert / re-save** an opened archive: change the format (ZIP, TAR.GZ, TAR, GZ) and/or the password — add, change or remove it. The original is left untouched; an encrypted source needs its current password entered first
 - **Verify after packing** (optional, off by default): re-reads the finished archive to confirm every entry is intact before you delete the originals

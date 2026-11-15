@@ -564,17 +564,19 @@ const pwConfirmRow = $('pwConfirmRow');
 pwEnabled.addEventListener('change', () => {
   $('pwFields').hidden = !pwEnabled.checked;
   if (pwEnabled.checked) { loadCommonList(); pwInput.focus(); }
-  updateConfirmVisibility();
+  updateConfirmState();
   updatePackUI();
 });
 
 function pwHidden() { return pwInput.classList.contains('masked'); }
 function confirmNeeded() { return pwEnabled.checked && pwHidden(); }
-// A re-typed password (while hidden) guards against a typo locking you out of your own files.
-function updateConfirmVisibility() {
+// A re-typed password (while hidden) guards against a typo locking you out of your own
+// files. The field stays in place and just greys out when the password is revealed,
+// so the layout doesn't jump.
+function updateConfirmState() {
   const need = confirmNeeded();
-  pwConfirmRow.hidden = !need;
-  if (!need) { $('pwMismatch').hidden = true; }
+  pwConfirm.disabled = !need;
+  if (!need) { $('pwMismatch').hidden = true; pwConfirm.classList.remove('error'); }
   updateMismatch();
 }
 function updateMismatch() {
@@ -607,7 +609,7 @@ setEyeButton($('pwShowBtn'), false);
 setEyeButton($('unpackPwShowBtn'), false);
 $('pwShowBtn').addEventListener('click', () => {
   togglePwVisibility(pwInput, $('pwShowBtn'));
-  updateConfirmVisibility(); // visible password needs no confirmation field
+  updateConfirmState(); // visible password needs no confirmation field
   updatePackUI();
 });
 
@@ -662,7 +664,7 @@ $('pwGenBtn').addEventListener('click', () => {
   pwInput.value = generatePassword();
   pwConfirm.value = pwInput.value;
   if (pwInput.classList.contains('masked')) togglePwVisibility(pwInput, $('pwShowBtn'));
-  updateConfirmVisibility();
+  updateConfirmState();
   resetHibp();
   updateStrength();
   updatePackUI();

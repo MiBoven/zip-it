@@ -152,6 +152,10 @@ input.toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2
 
 .pw-row { margin-top: 12px; }
 .pw-row input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* Reserves the width of the 3 icon buttons so the repeat field lines up with the
+   password field above it (3 × 36px + 2 × 8px gaps). */
+.btn-spacer { width: 124px; flex-shrink: 0; }
+input:disabled { opacity: .45; cursor: default; }
 /* Masking via text-security on a plain text input, so browsers don't treat these
    as login fields and never offer to save or autofill them. */
 input.masked { -webkit-text-security: disc; text-security: disc; }
