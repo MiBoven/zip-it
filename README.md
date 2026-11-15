@@ -33,7 +33,7 @@
 - Result card with the final size, compression ratio, time and number of skipped system files — **Download**, plus **Share** on devices that support sharing files (e.g. Android)
 
 ### Unpack
-- Open or drag & drop an archive: **ZIP** (stored / Deflate, AES-128/192/256, ZipCrypto, ZIP64, UTF-8 and legacy CP437 file names), **TAR**, **TAR.GZ / TGZ**, **GZ**
+- Open or drag & drop an archive: **ZIP** (stored / Deflate, AES-128/192/256, ZipCrypto, ZIP64, UTF-8 and legacy CP437 file names), **TAR**, **TAR.GZ / TGZ**, **GZ**, **XZ / TAR.XZ** and **LZMA** (`.lzma`). XZ/LZMA can be unpacked but not created (a good LZMA compressor is impractical in-browser)
 - Lists all entries with size and encryption type (`__MACOSX/` metadata folders are hidden)
 - **Encryption verdict**: a banner states whether the archive uses strong AES-256 or weak ZipCrypto — the "is it good enough?" check at a glance
 - Password field for encrypted archives — wrong passwords are detected and reported
@@ -66,7 +66,7 @@
 All archive work runs in a Web Worker (`worker.js`), so the page stays responsive while packing.
 
 - **Deflate** is a self-written encoder (LZ77 with hash chains, greedy matching for levels 1–3 and lazy matching for 4–9, dynamic/fixed Huffman blocks with stored-block fallback). Its output is on par with zlib at the same level.
-- **Decompression** uses the browser's built-in `DecompressionStream` (`deflate-raw` and `gzip`).
+- **Decompression** uses the browser's built-in `DecompressionStream` (`deflate-raw` and `gzip`). **XZ/LZMA** decompression is a self-written LZMA/LZMA2/XZ decoder (range coder + the full LZMA model), validated byte-for-byte against the `xz` reference tool.
 - **AES-256** follows the WinZip AE-2 specification: the key is derived with PBKDF2-HMAC-SHA1 (1,000 iterations, random 16-byte salt) via the Web Crypto API, data is encrypted with AES in CTR mode (self-written AES core, since WinZip uses a little-endian counter Web Crypto can't produce), and authenticated with HMAC-SHA1.
 - **ZipCrypto** is the traditional PKWARE stream cipher.
 - **Password recovery** reuses the same primitives: candidates are generated (dictionary mutations or a mask odometer) and checked against the smallest encrypted entry — the 2-byte verifier (AES) or 1-byte header check (ZipCrypto) as a fast prefilter, then a full HMAC (AES) or decompress-and-CRC (ZipCrypto) confirmation. It runs in a dedicated worker so Cancel can stop it instantly.
@@ -92,7 +92,7 @@ Works in current versions of Chrome, Edge, Firefox and Safari (16.4+ — `Decomp
 
 ### Limits of this version
 - Archives and single files up to 4 GB (everything is processed in memory, so the practical limit depends on the device)
-- Not supported yet: packing/unpacking 7z, RAR, BZIP2 and XZ; ZIP entries compressed with methods other than Store/Deflate
+- Not supported yet: 7z, RAR and BZIP2; creating XZ/LZMA; XZ files that use BCJ/delta filters; ZIP entries compressed with methods other than Store/Deflate
 
 ## Password list
 

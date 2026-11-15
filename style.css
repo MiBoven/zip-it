@@ -304,6 +304,7 @@ footer { text-align: center; color: var(--text-secondary); font-size: 12px; marg
   .modal { border-radius: 16px; border-bottom: 1px solid var(--border); }
 }
 .modal h2 { font-size: 17px; margin: 0 0 12px; }
+.modal h3.sec { font-size: 14px; margin: 18px 0 8px; color: var(--accent); }
 .modal p { margin: 0 0 12px; }
 .modal table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 12px; }
 .modal td { padding: 5px 6px; vertical-align: top; border-top: 1px solid var(--border); }

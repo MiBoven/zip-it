@@ -48,6 +48,7 @@
           <span>Dark mode</span><span class="switch" aria-hidden="true"></span>
         </button>
         <button class="menu-item" id="installItem" role="menuitem"><span>Install app</span></button>
+        <button class="menu-item" id="formatsItem" role="menuitem"><span>Formats &amp; compression</span></button>
         <button class="menu-item" id="settingsItem" role="menuitem"><span>Settings</span></button>
         <button class="menu-item" id="aboutItem" role="menuitem"><span>About</span></button>
       </div>
@@ -201,8 +202,8 @@
   <div class="drop" id="unpackDrop" tabindex="0" role="button">
     <svg class="drop-icon" viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
     <p><strong>Tap to choose an archive</strong><br>or drag and drop it here</p>
-    <p class="drop-formats">ZIP · TAR · TAR.GZ / TGZ · GZ</p>
-    <input type="file" id="unpackInput" accept=".zip,.tar,.gz,.tgz,.tar.gz,application/zip,application/x-zip-compressed,application/gzip,application/x-gzip,application/x-tar">
+    <p class="drop-formats">ZIP · TAR · TAR.GZ / TGZ · GZ · XZ / TAR.XZ · LZMA</p>
+    <input type="file" id="unpackInput" accept=".zip,.tar,.gz,.tgz,.tar.gz,.xz,.txz,.tar.xz,.lzma,.tlz,application/zip,application/x-zip-compressed,application/gzip,application/x-gzip,application/x-tar,application/x-xz,application/x-lzma">
   </div>
 
   <div class="card" id="archiveCard" hidden>
@@ -244,7 +245,7 @@
   <div class="list" id="unpackList"></div>
 </section>
 
-<footer>Zip-It · v0.6.0</footer>
+<footer>Zip-It · v0.7.0</footer>
 
 <!-- ===================== MODALS ===================== -->
 <div class="modal-bg" id="settingsModal">
@@ -416,18 +417,52 @@
       <div>
         <h2 id="aboutTitle">Zip-It</h2>
         <p class="brand-sub">The Zipper for your Files</p>
-        <p class="version">Version 0.6.0</p>
+        <p class="version">Version 0.7.0</p>
       </div>
     </div>
     <p>Packs files and folders into ZIP, TAR, TAR.GZ and GZ archives — and unpacks them again. Everything happens on your device: no file ever leaves your browser, and the app works offline once loaded.</p>
     <table>
       <tr><td>Pack</td><td>ZIP, TAR, TAR.GZ, GZ</td></tr>
-      <tr><td>Unpack</td><td>ZIP (incl. AES &amp; ZipCrypto), TAR, TAR.GZ / TGZ, GZ</td></tr>
+      <tr><td>Unpack</td><td>ZIP (incl. AES &amp; ZipCrypto), TAR, TAR.GZ / TGZ, GZ, XZ / TAR.XZ, LZMA</td></tr>
       <tr><td>Encryption</td><td>AES-256 (WinZip AE-2) or ZipCrypto</td></tr>
       <tr><td>Compression</td><td>Deflate, levels 0 (store) – 9 (maximum)</td></tr>
     </table>
     <p class="hint" id="aboutPwList"></p>
     <p class="hint">Privacy: no tracking, no cookies, no uploads. Only your theme and default settings are stored locally in this browser.</p>
+    <button type="button" class="close" data-close>Close</button>
+  </div>
+</div>
+
+<div class="modal-bg" id="formatsModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="formatsTitle">
+    <h2 id="formatsTitle">Formats &amp; compression</h2>
+
+    <h3 class="sec">What Zip-It can do</h3>
+    <table>
+      <tr><td>Pack</td><td>ZIP, TAR.GZ, TAR, GZ</td></tr>
+      <tr><td>Unpack</td><td>ZIP, TAR, TAR.GZ / TGZ, GZ, XZ / TAR.XZ, LZMA</td></tr>
+    </table>
+
+    <h3 class="sec">Why some files barely shrink</h3>
+    <p>Packing is <strong>lossless</strong>: it finds repetition and stores it compactly, without changing your data. That works well on things that have lots of repetition, and barely at all on data that's already compressed.</p>
+    <table>
+      <tr><td>Shrinks well</td><td>Text, code, CSV/JSON, logs, XML, uncompressed images (BMP), many documents</td></tr>
+      <tr><td>Barely shrinks</td><td>JPEG/PNG/HEIC photos, MP4/MOV videos, MP3/AAC audio, PDFs, and other archives — these are already compressed</td></tr>
+    </table>
+    <p class="hint">A phone photo (JPEG) typically gets only ~2% smaller even with the strongest compressor — that's normal. Zip-It detects already-compressed files and stores them as-is instead of wasting time, which is why you see “no size gain”.</p>
+    <p class="hint">To actually make a photo smaller you need <strong>lossy</strong> re-encoding (lower quality or resolution) — that's a job for an image tool, not a packer, because it changes the image.</p>
+
+    <h3 class="sec">Which format to pick</h3>
+    <table>
+      <tr><td>ZIP</td><td>The universal default. Opens everywhere. Optional password (AES-256 or ZipCrypto). Each file compressed separately.</td></tr>
+      <tr><td>TAR.GZ</td><td>Common on Linux/macOS. Bundles everything into one TAR, then compresses the whole thing — often a bit smaller than ZIP for many small files. No password.</td></tr>
+      <tr><td>TAR</td><td>Just bundles, no compression. Useful when the content won't shrink anyway, or as an intermediate.</td></tr>
+      <tr><td>GZ</td><td>A single compressed file (no folders).</td></tr>
+      <tr><td>XZ / LZMA</td><td>Strong compression (LZMA). Zip-It can <em>unpack</em> these; it doesn't create them, because a good LZMA compressor is impractical to run in the browser.</td></tr>
+    </table>
+
+    <h3 class="sec">The compression slider</h3>
+    <p><strong>Store (0)</strong> doesn't compress at all — fast, for data that won't shrink. <strong>Fast (1–3)</strong>, <strong>Normal (4–6)</strong> and <strong>Maximum (7–9)</strong> trade speed for size. Higher levels are slower and only help on compressible data; on photos and videos they make no real difference.</p>
     <button type="button" class="close" data-close>Close</button>
   </div>
 </div>

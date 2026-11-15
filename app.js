@@ -112,6 +112,7 @@ document.querySelectorAll('.modal-bg').forEach((bg) => {
   });
 });
 $('aboutItem').addEventListener('click', () => openModal('aboutModal'));
+$('formatsItem').addEventListener('click', () => openModal('formatsModal'));
 $('settingsItem').addEventListener('click', () => {
   $('setFormat').value = settings.format;
   $('setLevel').value = settings.level;

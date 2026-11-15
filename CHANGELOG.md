@@ -1,5 +1,10 @@
 # Changelog
 
+### 0.7.0 — 2026-11-14 — Unpack XZ / LZMA & a formats guide
+- **Unpack XZ, TAR.XZ and LZMA** (`.xz`, `.txz`, `.tar.xz`, `.lzma`). Zip-It now includes a self-written LZMA/LZMA2/XZ decoder (no third-party libraries), validated byte-for-byte against the `xz` reference tool. Creating XZ/LZMA is intentionally not offered — a good LZMA compressor is impractical to run in the browser
+- GZ and TAR.GZ (gzip) were already supported for both packing and unpacking
+- Added a **“Formats & compression” guide** to the menu: what Zip-It can pack/unpack, why already-compressed files (photos, videos, PDFs) barely shrink, lossless vs lossy, which format to pick, and what the compression slider does
+
 ### 0.6.0 — 2026-11-14 — Pause & resume password recovery
 - Password recovery can now be **paused and resumed** mid-run
 - Recovery progress is **saved in the browser**, keyed to the archive (name + size): close the archive or the tab, re-open the same archive, and Zip-It offers to **resume where it left off** — or "Start over" to discard it. Mask attacks seek directly to the saved position; dictionary attacks fast-forward to it

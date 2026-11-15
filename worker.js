@@ -972,6 +972,270 @@ async function openTar(read, total) {
   return entries;
 }
 
+// =====================================================================
+// XZ / LZMA2 / LZMA decoder (decompress only) — no third-party libraries
+// =====================================================================
+// Growable output buffer
+class Out {
+  constructor(){ this.buf=new Uint8Array(1<<16); this.len=0; }
+  ensure(n){ if(this.len+n<=this.buf.length) return; let c=this.buf.length; while(c<this.len+n) c*=2; const b=new Uint8Array(c); b.set(this.buf.subarray(0,this.len)); this.buf=b; }
+  push(b){ this.ensure(1); this.buf[this.len++]=b; }
+  copyMatch(dist, length){
+    this.ensure(length);
+    let s=this.len-dist;
+    if(s<0) throw fail('LZMA: bad match distance');
+    for(let i=0;i<length;i++){ this.buf[this.len]=this.buf[s]; this.len++; s++; }
+  }
+  bytes(){ return this.buf.subarray(0,this.len); }
+}
+
+const kNumBitModelTotalBits=11, kBitModelTotal=1<<11, kNumMoveBits=5;
+const kNumPosBitsMax=4;
+const kNumStates=12;
+const kNumLenToPosStates=4;
+const kNumAlignBits=4;
+const kEndPosModelIndex=14, kNumFullDistances=1<<(kEndPosModelIndex>>1);
+const kMatchMinLen=2;
+
+class Lzma {
+  constructor(out){ this.o=out; }
+  setLcLpPb(lc,lp,pb){ this.lc=lc; this.lp=lp; this.pb=pb; }
+  create(){
+    this.litProbs=new Uint16Array(0x300<<(this.lc+this.lp));
+    this.posSlot=new Uint16Array(kNumLenToPosStates*64);
+    this.spec=new Uint16Array(kNumFullDistances-kEndPosModelIndex);
+    this.align=new Uint16Array(1<<kNumAlignBits);
+    this.isMatch=new Uint16Array(kNumStates<<kNumPosBitsMax);
+    this.isRep=new Uint16Array(kNumStates);
+    this.isRepG0=new Uint16Array(kNumStates);
+    this.isRepG1=new Uint16Array(kNumStates);
+    this.isRepG2=new Uint16Array(kNumStates);
+    this.isRep0Long=new Uint16Array(kNumStates<<kNumPosBitsMax);
+    this.lenChoice=new Uint16Array(2); this.lenLow=new Uint16Array((1<<kNumPosBitsMax)*8); this.lenMid=new Uint16Array((1<<kNumPosBitsMax)*8); this.lenHigh=new Uint16Array(256);
+    this.repChoice=new Uint16Array(2); this.repLow=new Uint16Array((1<<kNumPosBitsMax)*8); this.repMid=new Uint16Array((1<<kNumPosBitsMax)*8); this.repHigh=new Uint16Array(256);
+  }
+  resetProbs(){
+    const fill=(a)=>a.fill(kBitModelTotal>>1);
+    fill(this.litProbs);fill(this.posSlot);fill(this.spec);fill(this.align);
+    fill(this.isMatch);fill(this.isRep);fill(this.isRepG0);fill(this.isRepG1);fill(this.isRepG2);fill(this.isRep0Long);
+    fill(this.lenChoice);fill(this.lenLow);fill(this.lenMid);fill(this.lenHigh);
+    fill(this.repChoice);fill(this.repLow);fill(this.repMid);fill(this.repHigh);
+  }
+  resetState(){ this.state=0; this.rep0=0;this.rep1=0;this.rep2=0;this.rep3=0; this.resetProbs(); }
+
+  // Range decoder bound to input buffer
+  rcInit(inBuf, inPos){
+    this.in=inBuf; this.inPos=inPos;
+    if(this.in[this.inPos]!==0) throw fail('LZMA: range coder init byte != 0');
+    this.inPos++;
+    this.code=0; this.range=0xFFFFFFFF>>>0;
+    for(let i=0;i<4;i++) this.code=((this.code<<8)|this.in[this.inPos++])>>>0;
+  }
+  norm(){ if(this.range>>>0 < (1<<24)){ this.range=(this.range<<8)>>>0; this.code=((this.code<<8)|(this.in[this.inPos++]|0))>>>0; } }
+  decodeBit(probs,i){
+    const p=probs[i];
+    const bound=((this.range>>>11)*p)>>>0;
+    let sym;
+    if((this.code>>>0) < (bound>>>0)){
+      this.range=bound>>>0;
+      probs[i]=p+((kBitModelTotal-p)>>>kNumMoveBits);
+      sym=0;
+    } else {
+      this.range=(this.range-bound)>>>0;
+      this.code=(this.code-bound)>>>0;
+      probs[i]=p-(p>>>kNumMoveBits);
+      sym=1;
+    }
+    this.norm();
+    return sym;
+  }
+  decodeDirect(n){
+    let res=0;
+    do {
+      this.range=this.range>>>1;
+      this.code=(this.code-this.range)>>>0;
+      const t=(0-(this.code>>>31))>>>0;
+      this.code=(this.code+(this.range&t))>>>0;
+      this.norm();
+      res=((res<<1)+t+1)>>>0;
+    } while(--n);
+    return res>>>0;
+  }
+  bitTree(probs,off,numBits){ let m=1; for(let i=0;i<numBits;i++) m=(m<<1)+this.decodeBit(probs,off+m); return m-(1<<numBits); }
+  bitTreeRev(probs,off,numBits){ let m=1,sym=0; for(let i=0;i<numBits;i++){ const b=this.decodeBit(probs,off+m); m=(m<<1)+b; sym|=b<<i; } return sym; }
+
+  decodeLen(choice,low,mid,high,posState){
+    if(this.decodeBit(choice,0)===0) return this.bitTree(low,posState<<3,3);
+    if(this.decodeBit(choice,1)===0) return 8+this.bitTree(mid,posState<<3,3);
+    return 16+this.bitTree(high,0,8);
+  }
+
+  // decode exactly `limit` output bytes (relative to current out length)
+  decodeChunk(limit){
+    const o=this.o;
+    const pbMask=(1<<this.pb)-1, lpMask=(1<<this.lp)-1, lc=this.lc;
+    const end=o.len+limit;
+    while(o.len<end){
+      const posState=o.len&pbMask;
+      if(this.decodeBit(this.isMatch,(this.state<<kNumPosBitsMax)+posState)===0){
+        // literal
+        const prevByte= o.len>0 ? o.buf[o.len-1] : 0;
+        const litState=((o.len&lpMask)<<lc)+(prevByte>>>(8-lc));
+        const probs=this.litProbs; const base=0x300*litState;
+        let symbol=1;
+        if(this.state>=7){
+          let matchByte=o.buf[o.len-this.rep0-1];
+          do {
+            const matchBit=(matchByte>>7)&1; matchByte=(matchByte<<1)&0xff;
+            const bit=this.decodeBit(probs, base+((1+matchBit)<<8)+symbol);
+            symbol=(symbol<<1)|bit;
+            if(matchBit!==bit){
+              while(symbol<0x100) symbol=(symbol<<1)|this.decodeBit(probs,base+symbol);
+              break;
+            }
+          } while(symbol<0x100);
+        } else {
+          while(symbol<0x100) symbol=(symbol<<1)|this.decodeBit(probs,base+symbol);
+        }
+        o.push(symbol&0xff);
+        this.state = this.state<4?0 : this.state<10? this.state-3 : this.state-6;
+        continue;
+      }
+      // match
+      let len;
+      if(this.decodeBit(this.isRep,this.state)!==0){
+        // rep match
+        if(this.decodeBit(this.isRepG0,this.state)===0){
+          if(this.decodeBit(this.isRep0Long,(this.state<<kNumPosBitsMax)+posState)===0){
+            this.state=this.state<7?9:11;
+            o.copyMatch(this.rep0+1,1);
+            continue;
+          }
+        } else {
+          let dist;
+          if(this.decodeBit(this.isRepG1,this.state)===0){ dist=this.rep1; }
+          else {
+            if(this.decodeBit(this.isRepG2,this.state)===0){ dist=this.rep2; }
+            else { dist=this.rep3; this.rep3=this.rep2; }
+            this.rep2=this.rep1;
+          }
+          this.rep1=this.rep0; this.rep0=dist;
+        }
+        len=this.decodeLen(this.repChoice,this.repLow,this.repMid,this.repHigh,posState)+kMatchMinLen;
+        this.state=this.state<7?8:11;
+      } else {
+        // new match
+        this.rep3=this.rep2; this.rep2=this.rep1; this.rep1=this.rep0;
+        len=this.decodeLen(this.lenChoice,this.lenLow,this.lenMid,this.lenHigh,posState);
+        this.state=this.state<7?7:10;
+        const lenState=len<kNumLenToPosStates?len:kNumLenToPosStates-1;
+        const posSlot=this.bitTree(this.posSlot,lenState<<6,6);
+        if(posSlot<4){ this.rep0=posSlot; }
+        else {
+          const numDirect=(posSlot>>1)-1;
+          let dist=(2|(posSlot&1))<<numDirect;
+          if(posSlot<kEndPosModelIndex){
+            dist+=this.bitTreeRev(this.spec, dist-posSlot-1, numDirect);
+          } else {
+            dist=(dist + (this.decodeDirect(numDirect-kNumAlignBits)<<kNumAlignBits))>>>0;
+            dist=(dist + this.bitTreeRev(this.align,0,kNumAlignBits))>>>0;
+          }
+          this.rep0=dist>>>0;
+        }
+        len+=kMatchMinLen;
+        if(this.rep0===0xFFFFFFFF){ // end marker
+          len-=kMatchMinLen; // undo
+          break;
+        }
+      }
+      o.copyMatch(this.rep0+1,len);
+    }
+  }
+}
+
+// varint (xz multibyte int)
+function readVarint(buf,pos){ let v=0,i=0; for(;;){ const b=buf[pos.p++]; v+= (b&0x7f)*Math.pow(2,7*i); if(!(b&0x80)) break; i++; } return v; }
+
+
+function xzDecompress(u8){
+  if(!(u8[0]===0xFD&&u8[1]===0x37&&u8[2]===0x7A&&u8[3]===0x58&&u8[4]===0x5A&&u8[5]===0x00)) throw fail('Not an XZ file.');
+  const checkType=u8[7]&0x0f;
+  const checkSize=[0,4,4,4,8,8,8,16,16,16,32,32,32,64,64,64][checkType];
+  const out=new Out();
+  let pos=12; // after stream header
+  while(pos<u8.length){
+    const bhsByte=u8[pos];
+    if(bhsByte===0) break; // index indicator
+    const blockHeaderSize=(bhsByte+1)*4;
+    const bhEnd=pos+blockHeaderSize;
+    let p={p:pos+1};
+    const flags=u8[p.p++];
+    const numFilters=(flags&0x03)+1;
+    if(flags&0x40) readVarint(u8,p); // compressed size present
+    if(flags&0x80) readVarint(u8,p); // uncompressed size present
+    let lzma2=false;
+    for(let f=0;f<numFilters;f++){
+      const id=readVarint(u8,p);
+      const propSize=readVarint(u8,p);
+      if(id===0x21){ lzma2=true; p.p+=propSize; }
+      else if(id===0x03 || (id>=0x04&&id<=0x0b)){ throw fail('XZ uses a filter (BCJ/delta) that is not supported yet.'); }
+      else { p.p+=propSize; throw fail('XZ filter 0x'+id.toString(16)+' not supported.'); }
+    }
+    if(!lzma2) throw fail('XZ block without LZMA2 is not supported.');
+    // data starts at bhEnd (block header incl its CRC32 is blockHeaderSize)
+    let dpos=bhEnd;
+    const startLen=out.len;
+    dpos=lzma2DecodeUntilEnd(u8,dpos,out);
+    // align to 4
+    while((dpos&3)!==0) dpos++;
+    dpos+=checkSize; // skip check
+    pos=dpos;
+  }
+  return out.bytes();
+}
+// LZMA2 variant that stops at its 0x00 terminator and returns new position
+function lzma2DecodeUntilEnd(input, inPos, out){
+  const lz=new Lzma(out); let propsSet=false;
+  for(;;){
+    const ctrl=input[inPos++];
+    if(ctrl===0) break;
+    if(ctrl<0x80){
+      if(ctrl>2) throw fail('LZMA2: bad control '+ctrl);
+      const size=((input[inPos]<<8)|input[inPos+1])+1; inPos+=2;
+      out.ensure(size); out.buf.set(input.subarray(inPos,inPos+size),out.len); out.len+=size; inPos+=size;
+    } else {
+      const unpackSize=((ctrl&0x1f)<<16)+((input[inPos]<<8)|input[inPos+1])+1; inPos+=2;
+      const packSize=((input[inPos]<<8)|input[inPos+1])+1; inPos+=2;
+      const reset=(ctrl>>5)&3;
+      if(reset>=2){ const d0=input[inPos++]; let d=d0; const lc=d%9; d=(d/9)|0; const lp=d%5; const pb=(d/5)|0; lz.setLcLpPb(lc,lp,pb); lz.create(); propsSet=true; }
+      if(!propsSet) throw fail('LZMA2: props not set');
+      if(reset>=1) lz.resetState();
+      lz.rcInit(input,inPos);
+      lz.decodeChunk(unpackSize);
+      inPos+=packSize;
+    }
+  }
+  return inPos;
+}
+
+// .lzma (alone) format
+function lzmaAloneDecompress(u8){
+  const d=u8[0]; let dd=d; const lc=dd%9; dd=(dd/9)|0; const lp=dd%5; const pb=(dd/5)|0;
+  // bytes 1-4 dict size, 5-12 uncompressed size (LE, may be 0xFFFFFFFFFFFFFFFF = unknown)
+  let size=0; for(let i=0;i<8;i++) size+=u8[5+i]*Math.pow(2,8*i);
+  const unknown = (size>=0xFFFFFFFFFFFFFFFF) || u8.slice(5,13).every(b=>b===0xff);
+  const out=new Out();
+  const lz=new Lzma(out); lz.setLcLpPb(lc,lp,pb); lz.create(); lz.resetState();
+  lz.rcInit(u8,13);
+  if(unknown){
+    // decode until end marker
+    lz.decodeChunk(Infinity);
+  } else {
+    lz.decodeChunk(size);
+  }
+  return out.bytes();
+}
+
 function detectFormat(head, name) {
   const n = (name || '').toLowerCase();
   if (head[0] === 0x50 && head[1] === 0x4b) return 'zip';
@@ -983,6 +1247,8 @@ function detectFormat(head, name) {
   if (head[0] === 0xfd && head[1] === 0x37 && head[2] === 0x7a && head[3] === 0x58) return 'xz';
   if (n.endsWith('.tar')) return 'tar';
   if (n.endsWith('.zip')) return 'zip';
+  if (n.endsWith('.xz') || n.endsWith('.txz')) return 'xz';
+  if (n.endsWith('.lzma') || n.endsWith('.tlz')) return 'lzma';
   return null;
 }
 
@@ -999,10 +1265,24 @@ async function openArchive(file) {
   const read = blobReader(file);
   const head = await read(0, 1024);
   const fmt = detectFormat(head, file.name);
-  if (!fmt) throw fail('Unknown archive format. Supported: ZIP, TAR, TAR.GZ / TGZ, GZ.');
-  if (['7z', 'rar', 'bzip2', 'xz'].includes(fmt)) throw fail(`${fmt.toUpperCase()} archives are not supported yet. Supported: ZIP, TAR, TAR.GZ / TGZ, GZ.`);
+  if (!fmt) throw fail('Unknown archive format. Supported: ZIP, TAR, TAR.GZ / TGZ, GZ, XZ / TAR.XZ, LZMA.');
+  if (['7z', 'rar', 'bzip2'].includes(fmt)) throw fail(`${fmt.toUpperCase()} archives are not supported yet. Supported: ZIP, TAR, TAR.GZ / TGZ, GZ, XZ / TAR.XZ, LZMA.`);
   if (fmt === 'zip') return { format: 'ZIP', kind: 'zip', read, entries: await openZip(read, file.size) };
   if (fmt === 'tar') return { format: 'TAR', kind: 'tar', read, entries: await openTar(read, file.size) };
+  if (fmt === 'xz' || fmt === 'lzma') {
+    const raw = new Uint8Array(await file.arrayBuffer());
+    let data;
+    try { data = fmt === 'xz' ? xzDecompress(raw) : lzmaAloneDecompress(raw); }
+    catch (e) { throw fail(e.message || `Damaged ${fmt.toUpperCase()} file — could not decompress.`); }
+    const memRead = memReader(data);
+    const label = fmt === 'xz' ? 'XZ' : 'LZMA';
+    if (data.length >= 512 && cstr(data, 257, 5) === 'ustar') {
+      return { format: 'TAR.' + label, kind: 'tar', read: memRead, mem: true, entries: await openTar(memRead, data.length) };
+    }
+    let name = (file.name || 'file').replace(/\.(txz|xz|lzma|tlz)$/i, '') || 'file';
+    if (/\.(txz|tlz)$/i.test(file.name || '') && !name.includes('.')) name += '.tar';
+    return { format: label, kind: 'single', read: memRead, mem: true, entries: [{ path: name, dir: false, size: data.length, offset: 0 }] };
+  }
   // gzip: decompress fully, then check whether it contains a TAR.
   const data = await decompress(new Uint8Array(await file.arrayBuffer()), 'gzip').catch(() => {
     throw fail('Damaged GZ file — could not decompress.');
