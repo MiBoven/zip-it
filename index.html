@@ -244,7 +244,7 @@
   <div class="list" id="unpackList"></div>
 </section>
 
-<footer>Zip-It · v0.5.1</footer>
+<footer>Zip-It · v0.6.0</footer>
 
 <!-- ===================== MODALS ===================== -->
 <div class="modal-bg" id="settingsModal">
@@ -348,6 +348,13 @@
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="recoverTitle">
     <h2 id="recoverTitle">Recover password</h2>
     <p class="hint">Zip-It tries passwords against the archive, here on your device. This only has a chance for weak or partly-remembered passwords — a strong unknown password can't be recovered.</p>
+    <div class="verdict" id="recoverResume" hidden>
+      <strong>Resume earlier attempt?</strong> <span id="recoverResumeInfo"></span>
+      <div class="btn-row" style="margin-top:10px">
+        <button type="button" class="btn primary-btn" id="recoverResumeBtn">Resume</button>
+        <button type="button" class="btn" id="recoverResetBtn">Start over</button>
+      </div>
+    </div>
     <div class="segment" id="recoverMode">
       <button type="button" class="seg-btn active" data-rmode="dict">Common passwords</button>
       <button type="button" class="seg-btn" data-rmode="mask">I remember part of it</button>
@@ -381,6 +388,7 @@
 
     <div class="btn-row">
       <button type="button" class="btn primary-btn" id="recoverStartBtn">Start</button>
+      <button type="button" class="btn" id="recoverPauseBtn" hidden>Pause</button>
       <button type="button" class="btn" id="recoverCancelBtn" hidden>Cancel</button>
       <button type="button" class="btn" id="recoverUseBtn" hidden>Use this password</button>
       <button type="button" class="btn" data-close id="recoverCloseBtn">Close</button>
@@ -408,7 +416,7 @@
       <div>
         <h2 id="aboutTitle">Zip-It</h2>
         <p class="brand-sub">The Zipper for your Files</p>
-        <p class="version">Version 0.5.1</p>
+        <p class="version">Version 0.6.0</p>
       </div>
     </div>
     <p>Packs files and folders into ZIP, TAR, TAR.GZ and GZ archives — and unpacks them again. Everything happens on your device: no file ever leaves your browser, and the app works offline once loaded.</p>

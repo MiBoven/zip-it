@@ -1026,8 +1026,26 @@ const RECOVER_CAP = { aes: 8e6, zipcrypto: 2e9 };
 const MASK_LEN = { '#': 10, '?': 26, '^': 26, '@': 52, '*': 62, '!': 11 };
 let recoverWorker = null;
 let recovering = false;
+let recoverPaused = false;
 let recoverMode = 'dict';
 let foundPassword = null;
+let recoverSpecMeta = null;   // {mode, mask?, variations?} of the running attempt
+let lastRecoverSave = 0;
+
+// Persist recovery progress so it can be resumed later, keyed to the archive (name+size).
+// The file itself can't be stored, so resuming means re-opening the same archive.
+function recoverKey() { return arc ? `zipit-recover:${arc.file.name}:${arc.file.size}` : null; }
+function saveRecoverProgress(tried, total) {
+  const key = recoverKey();
+  if (!key || !recoverSpecMeta) return;
+  try { localStorage.setItem(key, JSON.stringify(Object.assign({ tried, total, ts: Date.now() }, recoverSpecMeta))); } catch (e) { /* storage full/off */ }
+}
+function loadRecoverProgress() {
+  const key = recoverKey();
+  if (!key) return null;
+  try { const v = JSON.parse(localStorage.getItem(key) || 'null'); return (v && v.tried > 0) ? v : null; } catch (e) { return null; }
+}
+function clearRecoverProgress() { const key = recoverKey(); if (key) { try { localStorage.removeItem(key); } catch (e) { /* ignore */ } } }
 
 function archiveIsAes() {
   const enc = (arc ? arc.info.entries : []).filter((e) => e.encrypted);
@@ -1087,11 +1105,24 @@ $('recoverMask').addEventListener('input', updateRecMaskInfo);
 function resetRecoverUI() {
   $('recoverProgress').hidden = true;
   $('recoverResult').hidden = true;
+  $('recoverPauseBtn').hidden = true;
   $('recoverCancelBtn').hidden = true;
   $('recoverUseBtn').hidden = true;
   $('recoverStartBtn').hidden = false;
   $('recoverStartBtn').disabled = false;
   foundPassword = null;
+  recoverPaused = false;
+}
+
+function showResumeBanner() {
+  const saved = loadRecoverProgress();
+  const banner = $('recoverResume');
+  if (!saved) { banner.hidden = true; return; }
+  banner.hidden = false;
+  banner.className = 'verdict';
+  const pct = saved.total ? ` (${Math.min(100, Math.round((saved.tried / saved.total) * 100))}%)` : '';
+  const what = saved.mode === 'mask' ? `pattern “${saved.mask}”` : 'the common-password list';
+  $('recoverResumeInfo').textContent = `${saved.tried.toLocaleString()} passwords tried${pct} with ${what}.`;
 }
 
 $('recoverLink').addEventListener('click', () => {
@@ -1102,12 +1133,32 @@ $('recoverLink').addEventListener('click', () => {
   $('recoverMaskPanel').hidden = true;
   updateRecDictInfo();
   updateRecMaskInfo();
+  showResumeBanner();
   openModal('recoverModal');
 });
+
+$('recoverResumeBtn').addEventListener('click', async () => {
+  const saved = loadRecoverProgress();
+  if (!saved) { $('recoverResume').hidden = true; return; }
+  $('recoverResume').hidden = true;
+  let spec;
+  if (saved.mode === 'mask') {
+    spec = { mode: 'mask', mask: saved.mask, cap: recoverCap(), skip: saved.tried };
+    recoverMode = 'mask';
+  } else {
+    await loadCommonList();
+    const words = commonWords || (commonSet ? Array.from(commonSet) : COMMON.slice());
+    spec = { mode: 'dict', words, variations: !!saved.variations, skip: saved.tried };
+    recoverMode = 'dict';
+  }
+  startRecover(spec);
+});
+$('recoverResetBtn').addEventListener('click', () => { clearRecoverProgress(); $('recoverResume').hidden = true; });
 
 function stopRecoverWorker() {
   if (recoverWorker) { recoverWorker.terminate(); recoverWorker = null; }
   recovering = false;
+  recoverPaused = false;
 }
 
 $('recoverStartBtn').addEventListener('click', async () => {
@@ -1126,11 +1177,23 @@ $('recoverStartBtn').addEventListener('click', async () => {
   startRecover(spec);
 });
 
+function setRecoverPauseLabel() {
+  const btn = $('recoverPauseBtn');
+  btn.textContent = recoverPaused ? 'Resume' : 'Pause';
+  btn.classList.toggle('primary-btn', recoverPaused);
+}
+
 function startRecover(spec) {
   stopRecoverWorker();
   recovering = true;
+  recoverPaused = false;
   foundPassword = null;
+  recoverSpecMeta = spec.mode === 'mask' ? { mode: 'mask', mask: spec.mask } : { mode: 'dict', variations: spec.variations };
+  lastRecoverSave = 0;
+  $('recoverResume').hidden = true;
   $('recoverStartBtn').hidden = true;
+  $('recoverPauseBtn').hidden = false;
+  setRecoverPauseLabel();
   $('recoverCancelBtn').hidden = false;
   $('recoverUseBtn').hidden = true;
   $('recoverResult').hidden = true;
@@ -1145,12 +1208,20 @@ function startRecover(spec) {
       $('recoverBar').style.width = (m.total ? pct : 100) + '%';
       $('recoverBar').style.opacity = m.total ? 1 : 0.5;
       $('recoverStatus').textContent = `${m.tried.toLocaleString()}${m.total ? ' / ' + m.total.toLocaleString() : ''} tried · ${m.rate.toLocaleString()}/s`;
+      const now = Date.now();
+      if (now - lastRecoverSave > 1500) { lastRecoverSave = now; saveRecoverProgress(m.tried, m.total); }
+    } else if (m.type === 'recoverPaused') {
+      saveRecoverProgress(m.tried, m.total);
+      $('recoverStatus').textContent = `Paused · ${m.tried.toLocaleString()}${m.total ? ' / ' + m.total.toLocaleString() : ''} tried`;
     } else if (m.type === 'recoverHit') {
+      clearRecoverProgress();
       finishRecover(m.password, m);
     } else if (m.type === 'recoverDone') {
+      clearRecoverProgress();
       recovering = false;
       stopRecoverWorker();
       $('recoverProgress').hidden = true;
+      $('recoverPauseBtn').hidden = true;
       $('recoverStartBtn').hidden = false;
       $('recoverCancelBtn').hidden = true;
       const res = $('recoverResult');
@@ -1165,6 +1236,7 @@ function startRecover(spec) {
       recovering = false;
       stopRecoverWorker();
       $('recoverProgress').hidden = true;
+      $('recoverPauseBtn').hidden = true;
       $('recoverStartBtn').hidden = false;
       $('recoverCancelBtn').hidden = true;
       const res = $('recoverResult');
@@ -1177,11 +1249,20 @@ function startRecover(spec) {
   recoverWorker.postMessage({ id: 1, cmd: 'recover', file: arc.file, spec });
 }
 
+$('recoverPauseBtn').addEventListener('click', () => {
+  if (!recoverWorker || !recovering) return;
+  recoverPaused = !recoverPaused;
+  recoverWorker.postMessage({ id: 3, cmd: recoverPaused ? 'pauseRecover' : 'resumeRecover' });
+  setRecoverPauseLabel();
+  if (!recoverPaused) $('recoverStatus').textContent = 'Resuming…';
+});
+
 function finishRecover(pw, m) {
   recovering = false;
   stopRecoverWorker();
   foundPassword = pw;
   $('recoverProgress').hidden = true;
+  $('recoverPauseBtn').hidden = true;
   $('recoverCancelBtn').hidden = true;
   $('recoverStartBtn').hidden = false;
   $('recoverUseBtn').hidden = false;
@@ -1194,7 +1275,11 @@ function finishRecover(pw, m) {
 }
 
 $('recoverCancelBtn').addEventListener('click', () => {
-  if (recoverWorker && recovering) { recoverWorker.postMessage({ id: 2, cmd: 'cancelRecover' }); recovering = false; stopRecoverWorker(); resetRecoverUI(); }
+  if (recoverWorker && recovering) { recoverWorker.postMessage({ id: 2, cmd: 'cancelRecover' }); }
+  clearRecoverProgress();
+  recovering = false;
+  stopRecoverWorker();
+  resetRecoverUI();
 });
 $('recoverUseBtn').addEventListener('click', () => {
   if (foundPassword != null) { unpackPw.value = foundPassword; unpackPw.classList.remove('error'); }

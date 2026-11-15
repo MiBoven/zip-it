@@ -1114,10 +1114,18 @@ function maskPlan(mask) {
   }
   return { tmpl, total };
 }
-function* maskCandidates(tmpl) {
+function* maskCandidates(tmpl, startAt) {
   const dyn = [];
   for (let i = 0; i < tmpl.length; i++) if (tmpl[i].set) dyn.push(i);
   const counters = dyn.map(() => 0);
+  if (startAt > 0) { // seek directly to the resume position (mixed-radix, last slot least significant)
+    let rem = startAt;
+    for (let k = dyn.length - 1; k >= 0; k--) {
+      const base = tmpl[dyn[k]].set.length;
+      counters[k] = rem % base; rem = Math.floor(rem / base);
+    }
+    if (rem > 0) return; // past the end
+  }
   for (;;) {
     let s = '', d = 0;
     for (const t of tmpl) { if (t.set) { s += t.set[counters[d]]; d++; } else s += t.lit; }
@@ -1129,8 +1137,12 @@ function* maskCandidates(tmpl) {
 }
 
 let cancelRecover = false;
+let pausedRecover = false;
+let resumeWaiter = null;
+function wakeRecover() { if (resumeWaiter) { const r = resumeWaiter; resumeWaiter = null; r(); } }
+
 async function recover(file, spec, post) {
-  cancelRecover = false;
+  cancelRecover = false; pausedRecover = false; resumeWaiter = null;
   const arc = await openArchive(file);
   if (arc.kind !== 'zip') throw fail('Password recovery works only for ZIP archives.');
   const enc = arc.entries.filter((e) => !e.dir && e.encrypted);
@@ -1139,31 +1151,41 @@ async function recover(file, spec, post) {
   enc.sort((a, b) => (a.csize || 0) - (b.csize || 0));
   const verify = await makeVerifier(arc, enc[0]);
 
+  const skip = Math.max(0, spec.skip || 0);
   let gen, total;
   if (spec.mode === 'mask') {
     const { tmpl, total: tot } = maskPlan(spec.mask);
     if (tot <= 1 && !tmpl.some((t) => t.set)) throw fail('The pattern has no unknown positions to try.');
     if (tot > spec.cap) throw fail(`That pattern means ${tot.toLocaleString()} combinations — too many. Narrow it down.`);
-    gen = maskCandidates(tmpl); total = tot;
+    gen = maskCandidates(tmpl, skip); total = tot; // mask seeks directly to the resume point
   } else {
     total = countDict(spec.words, spec.variations);
     gen = dictCandidates(spec.words, spec.variations);
   }
 
-  let tried = 0;
+  let tried = skip;                                  // resume counter
+  let skipRemaining = spec.mode === 'mask' ? 0 : skip; // dict fast-forwards by iterating
+  let verified = 0;
   const start = Date.now();
   let lastPost = 0;
   for (const pw of gen) {
+    if (skipRemaining > 0) { skipRemaining--; continue; }
     if (cancelRecover) { post({ type: 'recoverCancelled', tried }); return; }
-    tried++;
+    if (pausedRecover) {
+      post({ type: 'recoverPaused', tried, total });
+      await new Promise((r) => { resumeWaiter = r; });
+      if (cancelRecover) { post({ type: 'recoverCancelled', tried }); return; }
+      lastPost = 0;
+    }
+    tried++; verified++;
     if (await verify(te.encode(pw))) { post({ type: 'recoverHit', password: pw, tried, ms: Date.now() - start }); return; }
-    if (tried % 128 === 0) {
+    if (verified % 128 === 0) {
       const now = Date.now();
       if (now - lastPost >= 100) {
         lastPost = now;
-        post({ type: 'recoverProgress', tried, total, rate: Math.round(tried / ((now - start) / 1000 || 1)) });
+        post({ type: 'recoverProgress', tried, total, rate: Math.round(verified / ((now - start) / 1000 || 1)) });
       }
-      await new Promise((r) => setTimeout(r)); // yield so a cancel message can arrive
+      await new Promise((r) => setTimeout(r)); // yield so pause/cancel messages can arrive
     }
   }
   post({ type: 'recoverDone', tried, ms: Date.now() - start });
@@ -1248,7 +1270,11 @@ if (typeof self !== 'undefined' && typeof importScripts === 'function') {
       } else if (m.cmd === 'recover') {
         await recover(m.file, m.spec, post);
       } else if (m.cmd === 'cancelRecover') {
-        cancelRecover = true;
+        cancelRecover = true; wakeRecover();
+      } else if (m.cmd === 'pauseRecover') {
+        pausedRecover = true;
+      } else if (m.cmd === 'resumeRecover') {
+        pausedRecover = false; wakeRecover();
       } else if (m.cmd === 'maskCount') {
         const { total } = maskPlan(m.mask || '');
         post({ type: 'maskCount', total });

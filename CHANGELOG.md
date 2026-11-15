@@ -1,5 +1,10 @@
 # Changelog
 
+### 0.6.0 — 2026-11-14 — Pause & resume password recovery
+- Password recovery can now be **paused and resumed** mid-run
+- Recovery progress is **saved in the browser**, keyed to the archive (name + size): close the archive or the tab, re-open the same archive, and Zip-It offers to **resume where it left off** — or "Start over" to discard it. Mask attacks seek directly to the saved position; dictionary attacks fast-forward to it
+- Progress and resume are cleared automatically once the password is found or the search is exhausted
+
 ### 0.5.1 — 2026-11-14 — Repeat-password field polish
 - The repeat-password field no longer appears and disappears (which made the page jump). It now stays in place and simply greys out when the password is revealed, and it's the same width as the password field above it
 
