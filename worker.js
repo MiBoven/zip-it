@@ -1416,6 +1416,30 @@ function* maskCandidates(tmpl, startAt) {
   }
 }
 
+// AES-256 parameters (salt + 2-byte verifier) of the smallest encrypted entry, for GPU recovery.
+async function aesParams(file) {
+  const arc = await openArchive(file);
+  if (arc.kind !== 'zip') return { ok: false, reason: 'notzip' };
+  const enc = arc.entries.filter((e) => !e.dir && e.encrypted && e.aes);
+  if (!enc.length) return { ok: false, reason: 'notaes' };
+  enc.sort((a, b) => (a.csize || 0) - (b.csize || 0));
+  const e = enc[0];
+  if (e.aes.strength !== 3) return { ok: false, reason: 'notaes256' };
+  const lh = await arc.read(e.localOff, 30);
+  const dataOff = e.localOff + 30 + r16(lh, 26) + r16(lh, 28);
+  const data = await arc.read(dataOff, 18);
+  return { ok: true, salt: data.slice(0, 16), verifier: [data[16], data[17]] };
+}
+// Full CPU confirmation of a single candidate (HMAC), to confirm a GPU verifier hit.
+async function verifyOne(file, password) {
+  const arc = await openArchive(file);
+  const enc = arc.entries.filter((e) => !e.dir && e.encrypted);
+  if (!enc.length) return false;
+  enc.sort((a, b) => (a.csize || 0) - (b.csize || 0));
+  try { const v = await makeVerifier(arc, enc[0]); return await v(te.encode(password)); }
+  catch (e) { return false; }
+}
+
 let cancelRecover = false;
 let pausedRecover = false;
 let resumeWaiter = null;
@@ -1543,6 +1567,10 @@ if (typeof self !== 'undefined' && typeof importScripts === 'function') {
       } else if (m.cmd === 'close') {
         current = null;
         post({ type: 'done' });
+      } else if (m.cmd === 'aesParams') {
+        post({ type: 'done', params: await aesParams(m.file) });
+      } else if (m.cmd === 'verifyOne') {
+        post({ type: 'done', match: await verifyOne(m.file, m.password) });
       } else if (m.cmd === 'convert') {
         await convert(m.file, m.opts, m.password, post);
       } else if (m.cmd === 'verify') {

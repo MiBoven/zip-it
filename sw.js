@@ -1,5 +1,5 @@
 /* Zip-It service worker — offline support (stale-while-revalidate). */
-const CACHE = 'zipit-v0.7.1';
+const CACHE = 'zipit-v0.8.0';
 const KEEP = [CACHE, 'zipit-share'];
 const ASSETS = [
   '/',
@@ -8,6 +8,7 @@ const ASSETS = [
   '/app.js',
   '/worker.js',
   '/manifest.json',
+  '/gpu-recover.js',
   '/data/common-passwords.txt',
   '/favicon.ico',
   '/icons/android-chrome-192x192.png',

@@ -1174,6 +1174,7 @@ $('recoverLink').addEventListener('click', () => {
   updateRecDictInfo();
   updateRecMaskInfo();
   showResumeBanner();
+  checkGpu();
   openModal('recoverModal');
 });
 
@@ -1191,7 +1192,7 @@ $('recoverResumeBtn').addEventListener('click', async () => {
     spec = { mode: 'dict', words, variations: !!saved.variations, skip: saved.tried };
     recoverMode = 'dict';
   }
-  startRecover(spec);
+  launchRecover(spec);
 });
 $('recoverResetBtn').addEventListener('click', () => { clearRecoverProgress(); $('recoverResume').hidden = true; });
 
@@ -1214,7 +1215,7 @@ $('recoverStartBtn').addEventListener('click', async () => {
     const words = commonWords || (commonSet ? Array.from(commonSet) : COMMON.slice());
     spec = { mode: 'dict', words, variations: $('recVariations').checked };
   }
-  startRecover(spec);
+  launchRecover(spec);
 });
 
 function setRecoverPauseLabel() {
@@ -1223,8 +1224,9 @@ function setRecoverPauseLabel() {
   btn.classList.toggle('primary-btn', recoverPaused);
 }
 
-function startRecover(spec) {
-  stopRecoverWorker();
+// Shared recovery UI, driven by either the CPU worker or the GPU runner.
+let recoverEngine = null; // { setPaused(bool), cancel() }
+function recoverUiStart(spec) {
   recovering = true;
   recoverPaused = false;
   foundPassword = null;
@@ -1240,59 +1242,70 @@ function startRecover(spec) {
   $('recoverProgress').hidden = false;
   $('recoverBar').style.width = '0%';
   $('recoverStatus').textContent = 'Starting…';
+}
+function recoverShowProgress(tried, total, rate) {
+  const pct = total ? Math.min(100, (tried / total) * 100) : 0;
+  $('recoverBar').style.width = (total ? pct : 100) + '%';
+  $('recoverBar').style.opacity = total ? 1 : 0.5;
+  $('recoverStatus').textContent = `${tried.toLocaleString()}${total ? ' / ' + total.toLocaleString() : ''} tried · ${rate.toLocaleString()}/s`;
+  const now = Date.now();
+  if (now - lastRecoverSave > 1500) { lastRecoverSave = now; saveRecoverProgress(tried, total); }
+}
+function recoverShowPaused(tried, total) {
+  saveRecoverProgress(tried, total);
+  $('recoverStatus').textContent = `Paused · ${tried.toLocaleString()}${total ? ' / ' + total.toLocaleString() : ''} tried`;
+}
+function recoverShowNotFound(tried) {
+  clearRecoverProgress();
+  recovering = false;
+  stopRecoverWorker();
+  $('recoverProgress').hidden = true;
+  $('recoverPauseBtn').hidden = true;
+  $('recoverStartBtn').hidden = false;
+  $('recoverCancelBtn').hidden = true;
+  const res = $('recoverResult');
+  res.hidden = false;
+  res.className = 'verdict warn';
+  res.innerHTML = `<strong>Not found.</strong> Tried ${tried.toLocaleString()} passwords. ${recoverMode === 'mask' ? 'Try a different pattern' : 'Try the “I remember part of it” mode'} if you recall more.`;
+}
+function recoverShowError(msg) {
+  recovering = false;
+  stopRecoverWorker();
+  $('recoverProgress').hidden = true;
+  $('recoverPauseBtn').hidden = true;
+  $('recoverStartBtn').hidden = false;
+  $('recoverCancelBtn').hidden = true;
+  const res = $('recoverResult');
+  res.hidden = false;
+  res.className = 'verdict warn';
+  res.innerHTML = `<strong>Couldn't run.</strong> ${msg}`;
+}
+
+function startRecover(spec) {
+  stopRecoverWorker();
+  recoverUiStart(spec);
   recoverWorker = new Worker('worker.js');
+  recoverEngine = {
+    setPaused: (p) => { if (recoverWorker) recoverWorker.postMessage({ id: 3, cmd: p ? 'pauseRecover' : 'resumeRecover' }); },
+    cancel: () => { if (recoverWorker) recoverWorker.postMessage({ id: 2, cmd: 'cancelRecover' }); }
+  };
   recoverWorker.onmessage = (e) => {
     const m = e.data;
-    if (m.type === 'recoverProgress') {
-      const pct = m.total ? Math.min(100, (m.tried / m.total) * 100) : 0;
-      $('recoverBar').style.width = (m.total ? pct : 100) + '%';
-      $('recoverBar').style.opacity = m.total ? 1 : 0.5;
-      $('recoverStatus').textContent = `${m.tried.toLocaleString()}${m.total ? ' / ' + m.total.toLocaleString() : ''} tried · ${m.rate.toLocaleString()}/s`;
-      const now = Date.now();
-      if (now - lastRecoverSave > 1500) { lastRecoverSave = now; saveRecoverProgress(m.tried, m.total); }
-    } else if (m.type === 'recoverPaused') {
-      saveRecoverProgress(m.tried, m.total);
-      $('recoverStatus').textContent = `Paused · ${m.tried.toLocaleString()}${m.total ? ' / ' + m.total.toLocaleString() : ''} tried`;
-    } else if (m.type === 'recoverHit') {
-      clearRecoverProgress();
-      finishRecover(m.password, m);
-    } else if (m.type === 'recoverDone') {
-      clearRecoverProgress();
-      recovering = false;
-      stopRecoverWorker();
-      $('recoverProgress').hidden = true;
-      $('recoverPauseBtn').hidden = true;
-      $('recoverStartBtn').hidden = false;
-      $('recoverCancelBtn').hidden = true;
-      const res = $('recoverResult');
-      res.hidden = false;
-      res.className = 'verdict warn';
-      res.innerHTML = `<strong>Not found.</strong> Tried ${m.tried.toLocaleString()} passwords. ${recoverMode === 'mask' ? 'Try a different pattern' : 'Try the “I remember part of it” mode'} if you recall more.`;
-    } else if (m.type === 'recoverCancelled') {
-      recovering = false;
-      stopRecoverWorker();
-      resetRecoverUI();
-    } else if (m.type === 'error') {
-      recovering = false;
-      stopRecoverWorker();
-      $('recoverProgress').hidden = true;
-      $('recoverPauseBtn').hidden = true;
-      $('recoverStartBtn').hidden = false;
-      $('recoverCancelBtn').hidden = true;
-      const res = $('recoverResult');
-      res.hidden = false;
-      res.className = 'verdict warn';
-      res.innerHTML = `<strong>Couldn't run.</strong> ${m.message}`;
-    }
+    if (m.type === 'recoverProgress') recoverShowProgress(m.tried, m.total, m.rate);
+    else if (m.type === 'recoverPaused') recoverShowPaused(m.tried, m.total);
+    else if (m.type === 'recoverHit') { clearRecoverProgress(); finishRecover(m.password, m); }
+    else if (m.type === 'recoverDone') recoverShowNotFound(m.tried);
+    else if (m.type === 'recoverCancelled') { recovering = false; stopRecoverWorker(); resetRecoverUI(); }
+    else if (m.type === 'error') recoverShowError(m.message);
   };
   recoverWorker.onerror = (e) => { e.preventDefault(); recovering = false; stopRecoverWorker(); };
   recoverWorker.postMessage({ id: 1, cmd: 'recover', file: arc.file, spec });
 }
 
 $('recoverPauseBtn').addEventListener('click', () => {
-  if (!recoverWorker || !recovering) return;
+  if (!recoverEngine || !recovering) return;
   recoverPaused = !recoverPaused;
-  recoverWorker.postMessage({ id: 3, cmd: recoverPaused ? 'pauseRecover' : 'resumeRecover' });
+  recoverEngine.setPaused(recoverPaused);
   setRecoverPauseLabel();
   if (!recoverPaused) $('recoverStatus').textContent = 'Resuming…';
 });
@@ -1315,7 +1328,7 @@ function finishRecover(pw, m) {
 }
 
 $('recoverCancelBtn').addEventListener('click', () => {
-  if (recoverWorker && recovering) { recoverWorker.postMessage({ id: 2, cmd: 'cancelRecover' }); }
+  if (recoverEngine && recovering) recoverEngine.cancel();
   clearRecoverProgress();
   recovering = false;
   stopRecoverWorker();
@@ -1327,8 +1340,146 @@ $('recoverUseBtn').addEventListener('click', () => {
   toast('Password filled in — now extract your files');
 });
 $('recoverModal').addEventListener('click', (e) => {
-  if ((e.target === $('recoverModal') || e.target.hasAttribute('data-close'))) stopRecoverWorker();
+  if ((e.target === $('recoverModal') || e.target.hasAttribute('data-close'))) { if (recoverEngine) recoverEngine.cancel(); stopRecoverWorker(); }
 });
+
+// ---------- GPU recovery (WebGPU, AES-256 only; CPU fallback) ----------
+const teRec = new TextEncoder();
+let gpuReady = false, gpuParams = null;
+let gpuCancel = false, gpuPaused = false, gpuResumeWaiter = null;
+
+function useGpu() { return $('gpuToggle').checked && gpuReady && gpuParams && !$('gpuToggle').disabled; }
+function launchRecover(spec) {
+  if (useGpu()) startRecoverGpu(spec, gpuParams); else startRecover(spec);
+}
+
+async function checkGpu() {
+  const row = $('gpuRow'), hint = $('gpuHint'), tog = $('gpuToggle');
+  gpuReady = false; gpuParams = null;
+  if (!window.GpuRecover || !GpuRecover.supported() || !arc) { row.hidden = true; return; }
+  row.hidden = false; tog.disabled = true; hint.textContent = 'checking…';
+  try {
+    const pr = await callWorker({ cmd: 'aesParams', file: arc.file });
+    const pp = pr.params;
+    if (!pp || !pp.ok) {
+      hint.textContent = (pp && pp.reason === 'notaes256') ? 'only for AES-256 archives' : 'not available for this archive';
+      tog.checked = false; tog.disabled = true; return;
+    }
+    gpuParams = { salt: new Uint8Array(pp.salt), verifier: pp.verifier, iterations: 1000 };
+    const avail = await GpuRecover.isAvailable();
+    if (!avail) { hint.textContent = 'GPU unavailable — using CPU'; tog.checked = false; tog.disabled = true; return; }
+    gpuReady = true; tog.disabled = false; tog.checked = true; hint.textContent = 'faster, runs on your GPU';
+  } catch (e) { hint.textContent = 'unavailable'; tog.checked = false; tog.disabled = true; }
+}
+
+// Candidate generators — must match worker.js so GPU/CPU share skip/resume positions.
+const MUT_SUFFIX_APP = ['', '1', '2', '3', '12', '123', '1234', '!', '?', '.', '01', '00', '007', '99', '69',
+  '2020', '2021', '2022', '2023', '2024', '2025', '2026', '!!', '123!', '#1'];
+function* mutateApp(word) {
+  const seen = new Set();
+  const caps = [word, word.charAt(0).toUpperCase() + word.slice(1), word.toUpperCase()];
+  for (const base of caps) for (const suf of MUT_SUFFIX_APP) { const f = base + suf; if (!seen.has(f)) { seen.add(f); yield f; } }
+  const leet = word.replace(/a/g, '@').replace(/o/g, '0').replace(/i/g, '1').replace(/e/g, '3').replace(/s/g, '$');
+  if (leet !== word && !seen.has(leet)) yield leet;
+}
+function countDictApp(words, variations) {
+  if (!variations) return words.length;
+  let n = 0; for (const w of words) for (const _ of mutateApp(w)) n++; return n;
+}
+function* dictGenApp(words, variations) {
+  for (const w of words) { if (!w) continue; if (variations) { for (const f of mutateApp(w)) yield f; } else yield w; }
+}
+const MASK_CHARS_APP = {
+  '#': '0123456789', '?': 'abcdefghijklmnopqrstuvwxyz', '^': 'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+  '@': 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ',
+  '*': 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', '!': '!@#$%&*?-_.'
+};
+function maskPlanApp(mask) {
+  const tmpl = []; let total = 1;
+  for (let i = 0; i < mask.length; i++) {
+    const ch = mask[i];
+    if (ch === '\\' && i + 1 < mask.length) { tmpl.push({ lit: mask[++i] }); continue; }
+    if (MASK_CHARS_APP[ch]) { tmpl.push({ set: MASK_CHARS_APP[ch] }); total *= MASK_CHARS_APP[ch].length; }
+    else tmpl.push({ lit: ch });
+  }
+  return { tmpl, total };
+}
+function* maskGenApp(tmpl, startAt) {
+  const dyn = []; for (let i = 0; i < tmpl.length; i++) if (tmpl[i].set) dyn.push(i);
+  const counters = dyn.map(() => 0);
+  if (startAt > 0) { let rem = startAt; for (let k = dyn.length - 1; k >= 0; k--) { const base = tmpl[dyn[k]].set.length; counters[k] = rem % base; rem = Math.floor(rem / base); } if (rem > 0) return; }
+  for (;;) {
+    let s = '', d = 0;
+    for (const t of tmpl) { if (t.set) { s += t.set[counters[d]]; d++; } else s += t.lit; }
+    yield s;
+    let k = counters.length - 1;
+    while (k >= 0) { counters[k]++; if (counters[k] < tmpl[dyn[k]].set.length) break; counters[k] = 0; k--; }
+    if (k < 0) break;
+  }
+}
+function makeRecoverIterator(spec) {
+  const skip = spec.skip || 0;
+  if (spec.mode === 'mask') {
+    const { tmpl, total } = maskPlanApp(spec.mask);
+    return { it: maskGenApp(tmpl, skip), total };
+  }
+  const total = countDictApp(spec.words, spec.variations);
+  const g = dictGenApp(spec.words, spec.variations);
+  for (let i = 0; i < skip; i++) { if (g.next().done) break; }
+  return { it: g, total };
+}
+
+async function startRecoverGpu(spec, params) {
+  stopRecoverWorker();
+  recoverUiStart(spec);
+  gpuCancel = false; gpuPaused = false; gpuResumeWaiter = null;
+  recoverEngine = {
+    setPaused: (p) => { gpuPaused = p; if (!p && gpuResumeWaiter) { const r = gpuResumeWaiter; gpuResumeWaiter = null; r(); } },
+    cancel: () => { gpuCancel = true; if (gpuResumeWaiter) { const r = gpuResumeWaiter; gpuResumeWaiter = null; r(); } }
+  };
+  const skip = spec.skip || 0;
+  const { it, total } = makeRecoverIterator(spec);
+  let tried = skip, verified = 0;
+  const start = performance.now();
+  let lastPost = 0;
+  const BATCH = 8192;
+  try {
+    for (;;) {
+      if (gpuCancel) { resetRecoverUI(); return; }
+      if (gpuPaused) {
+        recoverShowPaused(tried, total);
+        await new Promise((r) => { gpuResumeWaiter = r; });
+        if (gpuCancel) { resetRecoverUI(); return; }
+        $('recoverStatus').textContent = 'Resuming…';
+      }
+      const encoded = [], strings = [];
+      let iterDone = false;
+      while (encoded.length < BATCH) {
+        const n = it.next();
+        if (n.done) { iterDone = true; break; }
+        tried++;
+        const bytes = teRec.encode(n.value);
+        if (bytes.length <= 64) { strings.push(n.value); encoded.push(bytes); }
+      }
+      if (encoded.length) {
+        const hit = await GpuRecover.runBatch(encoded, params);
+        if (hit >= 0) {
+          const pw = strings[hit];
+          const conf = await callWorker({ cmd: 'verifyOne', file: arc.file, password: pw });
+          if (conf.match) { clearRecoverProgress(); finishRecover(pw, { tried, ms: performance.now() - start }); return; }
+          // 2-byte false positive — keep going
+        }
+        verified += encoded.length;
+      }
+      const now = performance.now();
+      if (now - lastPost > 100) { lastPost = now; recoverShowProgress(tried, total, Math.round(verified / ((now - start) / 1000 || 1))); }
+      if (iterDone) { recoverShowNotFound(tried); return; }
+      await new Promise((r) => setTimeout(r));
+    }
+  } catch (e) {
+    recoverShowError('GPU recovery failed: ' + (e.message || e) + '. Turn off “Use GPU” to fall back to the CPU.');
+  }
+}
 
 $('selectAll').addEventListener('change', () => {
   const on = $('selectAll').checked;

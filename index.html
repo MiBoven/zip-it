@@ -245,7 +245,7 @@
   <div class="list" id="unpackList"></div>
 </section>
 
-<footer>Zip-It · v0.7.1</footer>
+<footer>Zip-It · v0.8.0</footer>
 
 <!-- ===================== MODALS ===================== -->
 <div class="modal-bg" id="settingsModal">
@@ -377,6 +377,11 @@
       <button type="button" class="seg-btn" data-rmode="mask">I remember part of it</button>
     </div>
 
+    <label class="toggle-row" id="gpuRow" for="gpuToggle" hidden style="cursor:pointer;margin-bottom:10px">
+      <span class="label-main">Use GPU <span class="hint-inline" id="gpuHint">checking…</span></span>
+      <input type="checkbox" class="toggle" id="gpuToggle">
+    </label>
+
     <div id="recoverDict">
       <label class="toggle-row" for="recVariations" style="cursor:pointer">
         <span class="label-main">Also try variations <span class="hint-inline">capitalisation, digits, years, leet</span></span>
@@ -433,7 +438,7 @@
       <div>
         <h2 id="aboutTitle">Zip-It</h2>
         <p class="brand-sub">The Zipper for your Files</p>
-        <p class="version">Version 0.7.1</p>
+        <p class="version">Version 0.8.0</p>
       </div>
     </div>
     <p>Packs files and folders into ZIP, TAR, TAR.GZ and GZ archives — and unpacks them again. Everything happens on your device: no file ever leaves your browser, and the app works offline once loaded.</p>
@@ -505,6 +510,7 @@
         <div class="acc-body" hidden>
           <p>If you forgot a ZIP's password, Zip-It can try to find it on your device. <strong>Common passwords</strong> runs a list (optionally with variations); <strong>I remember part of it</strong> takes a pattern like <code>Sommer####</code> and tries the unknown positions. This only works for weak or partly-remembered passwords — a strong unknown password stays unrecoverable.</p>
           <p>You can <strong>Pause</strong> and resume any time. Progress is saved in this browser, tied to the archive (its name and size) — <em>no passwords and no file contents are stored</em>. Re-open the same archive and Zip-It offers to resume where it left off.</p>
+          <p>On desktop browsers with WebGPU, a <strong>Use GPU</strong> switch appears for AES-256 archives. It runs the guessing on your graphics card — much faster than the CPU, so larger patterns become feasible. It still won't crack a genuinely strong password. If your GPU can't do it, the switch stays off and the CPU is used.</p>
           <p><strong>Clearing it:</strong> it clears automatically once the password is found or the search is exhausted, or when you choose “Start over”. To wipe all saved recovery data at once, use <strong>Settings → Clear saved recovery progress</strong>.</p>
         </div>
       </div>
@@ -560,6 +566,7 @@
 
 <div class="toast" id="toast" hidden></div>
 
+<script src="gpu-recover.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -43,6 +43,7 @@
   - Runs in its own worker with a progress bar, **Pause/Resume** and a **Cancel**. On success it shows the password and can fill it into the extract field. This only helps for weak or partly-remembered passwords — a strong unknown AES password is not realistically recoverable (roughly 1,000–2,000 guesses/second for AES on a typical device)
   - **Resume later**: progress is saved in the browser, keyed to the archive (name + size). Close the tab or the archive and, when you re-open the same archive, Zip-It offers to resume where it left off (the file itself can't be stored, so you re-select it). "Start over" discards the saved progress
   - The dictionary keeps each list entry's original casing, so an unusual-case common password (e.g. `LuckyLuke`) is tried verbatim, on top of the lower/Capitalised/UPPER variants the recovery generates itself
+  - **GPU acceleration** (desktop WebGPU, AES-256 only): a **Use GPU** switch runs PBKDF2-HMAC-SHA1 for thousands of candidates per dispatch on the graphics card via a self-written WGSL compute shader — far faster than the CPU, so larger masks become feasible. The GPU does the fast 2-byte verifier prefilter; the rare hits are confirmed on the CPU with the full HMAC. On enabling, the shader is self-tested against a known vector and silently falls back to the CPU if WebGPU is missing or the test fails. Still can't recover a genuinely strong password
 - **Checkbox per file** with a select-all control — **Extract selected** pulls out only the ticked files (all selected by default)
 - **Convert / re-save**: re-pack an opened archive into another format (ZIP, TAR.GZ, TAR, GZ) and/or with a different password — add one, change it, or remove it. The original file is untouched; an encrypted source needs its password entered first
 - **Save** single files, **Download all** (separate downloads), or **Extract to folder…** (keeps the folder structure; Chrome / Edge on desktop)
@@ -82,6 +83,7 @@ All archive work runs in a Web Worker (`worker.js`), so the page stays responsiv
 - `style.css` — all styling
 - `app.js` — UI logic
 - `worker.js` — compression, encryption, archive writers and readers
+- `gpu-recover.js` — optional WebGPU PBKDF2 shader for GPU-accelerated recovery
 - `data/common-passwords.txt` — list for the password-strength check (see below)
 - `sw.js` — service worker (offline support, stale-while-revalidate)
 - `manifest.json` — PWA manifest

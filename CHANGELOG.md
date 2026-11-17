@@ -1,5 +1,11 @@
 # Changelog
 
+### 0.8.0 — 2026-11-15 — GPU-accelerated password recovery
+- Password recovery can now run on the **graphics card** via WebGPU (desktop, AES-256 archives): a **Use GPU** switch in the recovery dialog. A self-written WGSL compute shader does PBKDF2-HMAC-SHA1 (1000 iterations) for thousands of candidates per dispatch and checks the 2-byte verifier; the rare hits are confirmed on the CPU with the full HMAC
+- The shader **self-tests** against a known vector when enabled and **falls back to the CPU** automatically if WebGPU is unavailable or the test fails. The switch only appears for AES-256 archives on browsers that support it
+- No speed-up for ZipCrypto (already fast on the CPU) or AES-128/192, which keep using the CPU. GPU acceleration doesn't make a genuinely strong password recoverable — it mainly speeds up dictionary and mask attacks and makes larger masks feasible
+- Pause/resume and saved progress work the same on GPU and CPU (identical candidate order), so you can switch between them
+
 ### 0.7.1 — 2026-11-15 — Help panel, setting explanations & safer clipboard
 - Added a **Help & info** panel to the menu (collapsible sections) covering getting started, packing, unpacking/converting, passwords &amp; encryption, password recovery, compression &amp; formats, and privacy — replaces the earlier “Formats &amp; compression” dialog and folds it in
 - Every **Settings** item now has a short explanation (what system files are, what AES-256 vs ZipCrypto means, what verify does, …)
